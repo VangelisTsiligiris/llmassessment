@@ -241,4 +241,82 @@ if user_prompt:
         "turn_count": st.session_state.turn_count,
         "event_type": "prompt",
         "milestone_id": m["id"],
-        "attachment
+        "attachment_type": "text",
+        "prompt": user_prompt,
+        "response": "",
+        "latency_ms": 0,
+        "flags": "",
+    })
+
+    with st.container():
+        st.markdown(f'<div class="chat-msg chat-user">{user_prompt}</div>', unsafe_allow_html=True)
+        reply, latency_ms = stream_gemini(user_prompt)
+        st.markdown(f'<div class="chat-msg chat-assistant">{reply}</div>', unsafe_allow_html=True)
+        st_copy_to_clipboard(reply, "Copy response")
+
+    # Log response
+    emit_event({
+        "timestamp": datetime.datetime.now().isoformat(),
+        "user_id": st.session_state.user_id,
+        "assignment_id": ASSIGNMENT["id"],
+        "turn_count": st.session_state.turn_count,
+        "event_type": "llm_response",
+        "milestone_id": m["id"],
+        "attachment_type": "text",
+        "prompt": user_prompt,
+        "response": reply,
+        "latency_ms": latency_ms,
+        "flags": "",
+    })
+
+# Draft workspace
+draft = st.text_area("Working draft for this milestone:", height=220, key=f"draft_{m['id']}")
+cols = st.columns(3)
+with cols[0]:
+    if st.button("Save draft snapshot"):
+        emit_event({
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user_id": st.session_state.user_id,
+            "assignment_id": ASSIGNMENT["id"],
+            "turn_count": st.session_state.turn_count,
+            "event_type": "edit",
+            "milestone_id": m["id"],
+            "attachment_type": "text",
+            "prompt": "",
+            "response": draft,
+            "latency_ms": 0,
+            "flags": "",
+        })
+        st.success("Snapshot saved.")
+
+with cols[1]:
+    disabled_prev = st.session_state.milestone_index == 0
+    if st.button("⬅️ Previous", disabled=disabled_prev):
+        if st.session_state.milestone_index > 0:
+            st.session_state.milestone_index -= 1
+            st.rerun()
+
+with cols[2]:
+    if st.button("Mark milestone complete ✅"):
+        emit_event({
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user_id": st.session_state.user_id,
+            "assignment_id": ASSIGNMENT["id"],
+            "turn_count": st.session_state.turn_count,
+            "event_type": "milestone_submit",
+            "milestone_id": m["id"],
+            "attachment_type": "",
+            "prompt": "",
+            "response": "",
+            "latency_ms": 0,
+            "flags": "",
+        })
+        if st.session_state.milestone_index < len(ASSIGNMENT["milestones"]) - 1:
+            st.session_state.milestone_index += 1
+            st.rerun()
+
+# Evidence Pack generation
+st.divider()
+if st.button("Generate Evidence Pack (JSON)"):
+    st.session_state.evidence_json = build_evidence_pack()
+    st.success("Evidence Pack generated — use the sidebar button to download.")
