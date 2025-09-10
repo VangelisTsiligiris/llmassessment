@@ -1,0 +1,5 @@
+streamlit
+google-generativeai
+gspread
+google-auth
+streamlit-copy-to-clipboard
