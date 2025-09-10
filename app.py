@@ -1,6 +1,7 @@
 import streamlit as st
 import random, string, datetime, time, json, hashlib
 import gspread
+from gspread.exceptions import WorksheetNotFound
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
@@ -63,15 +64,24 @@ except Exception as e:
     st.error(f"Google Sheets access failed. Share the sheet with your service account. Error: {e}")
     st.stop()
 
-def get_events_ws():
+def get_or_create_ws(title: str, headers: list | None = None):
+    """Get a worksheet by title, or create it (with headers if provided)."""
     try:
-        ws = sh.worksheet("events")
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title="events", rows=1, cols=len(EVENT_HEADERS))
-        ws.append_row(EVENT_HEADERS, value_input_option="USER_ENTERED")
+        ws = sh.worksheet(title)
+    except WorksheetNotFound:
+        ws = sh.add_worksheet(title=title, rows=1, cols=(len(headers) if headers else 10))
+        if headers:
+            ws.append_row(headers, value_input_option="USER_ENTERED")
     return ws
 
+def get_events_ws():
+    return get_or_create_ws("events", EVENT_HEADERS)
+
+def get_connectivity_ws():
+    return get_or_create_ws("connectivity", ["timestamp","user_id","note"])
+
 events_ws = get_events_ws()
+connectivity_ws = get_connectivity_ws()
 
 # --- Session State ---
 if "user_id" not in st.session_state:
@@ -123,7 +133,18 @@ def emit_event(event: dict):
     ]
     append_event_row(row)
 
-# --- LLM streaming ---
+# --- Connectivity Test ---
+def run_connectivity_test():
+    """Writes a ping row to the 'connectivity' worksheet and returns row count after write."""
+    try:
+        ts = datetime.datetime.now().isoformat()
+        connectivity_ws.append_row([ts, st.session_state.user_id, "ping"], value_input_option="USER_ENTERED")
+        rows = len(connectivity_ws.get_all_values())
+        return True, ts, rows
+    except Exception as e:
+        return False, str(e), None
+
+# --- LLM call ---
 def stream_gemini(prompt_text: str) -> str:
     start = time.time()
     chunks = []
@@ -164,7 +185,17 @@ def milestone_header():
 # --- Sidebar ---
 with st.sidebar:
     st.markdown(f"**User ID:** `{st.session_state.user_id}`")
-    st.caption("Share the Google Sheet with your service account to enable logging.")
+    if st.button("🔧 Run Google Sheets write test", use_container_width=True):
+        ok, info, rows = run_connectivity_test()
+        if ok:
+            st.success(f"Test write succeeded at {info}. Total rows now: {rows}.")
+        else:
+            st.error(f"Test write failed: {info}")
+
+    with st.expander("Diagnostics", expanded=False):
+        st.write("Service account:", st.secrets["gcp_service_account"].get("client_email", "N/A"))
+        st.write("Spreadsheet key:", SPREADSHEET_KEY)
+
     if st.session_state.evidence_json:
         st.download_button(
             "📥 Download Evidence Pack (JSON)",
@@ -210,82 +241,4 @@ if user_prompt:
         "turn_count": st.session_state.turn_count,
         "event_type": "prompt",
         "milestone_id": m["id"],
-        "attachment_type": "text",
-        "prompt": user_prompt,
-        "response": "",
-        "latency_ms": 0,
-        "flags": "",
-    })
-
-    with st.container():
-        st.markdown(f'<div class="chat-msg chat-user">{user_prompt}</div>', unsafe_allow_html=True)
-        reply, latency_ms = stream_gemini(user_prompt)
-        st.markdown(f'<div class="chat-msg chat-assistant">{reply}</div>', unsafe_allow_html=True)
-        st_copy_to_clipboard(reply, "Copy response")
-
-    # Log response
-    emit_event({
-        "timestamp": datetime.datetime.now().isoformat(),
-        "user_id": st.session_state.user_id,
-        "assignment_id": ASSIGNMENT["id"],
-        "turn_count": st.session_state.turn_count,
-        "event_type": "llm_response",
-        "milestone_id": m["id"],
-        "attachment_type": "text",
-        "prompt": user_prompt,
-        "response": reply,
-        "latency_ms": latency_ms,
-        "flags": "",
-    })
-
-# Draft workspace
-draft = st.text_area("Working draft for this milestone:", height=220, key=f"draft_{m['id']}")
-cols = st.columns(3)
-with cols[0]:
-    if st.button("Save draft snapshot"):
-        emit_event({
-            "timestamp": datetime.datetime.now().isoformat(),
-            "user_id": st.session_state.user_id,
-            "assignment_id": ASSIGNMENT["id"],
-            "turn_count": st.session_state.turn_count,
-            "event_type": "edit",
-            "milestone_id": m["id"],
-            "attachment_type": "text",
-            "prompt": "",
-            "response": draft,
-            "latency_ms": 0,
-            "flags": "",
-        })
-        st.success("Snapshot saved.")
-
-with cols[1]:
-    disabled_prev = st.session_state.milestone_index == 0
-    if st.button("⬅️ Previous", disabled=disabled_prev):
-        if st.session_state.milestone_index > 0:
-            st.session_state.milestone_index -= 1
-            st.rerun()
-
-with cols[2]:
-    if st.button("Mark milestone complete ✅"):
-        emit_event({
-            "timestamp": datetime.datetime.now().isoformat(),
-            "user_id": st.session_state.user_id,
-            "assignment_id": ASSIGNMENT["id"],
-            "turn_count": st.session_state.turn_count,
-            "event_type": "milestone_submit",
-            "milestone_id": m["id"],
-            "attachment_type": "",
-            "prompt": "",
-            "response": "",
-            "latency_ms": 0,
-            "flags": "",
-        })
-        if st.session_state.milestone_index < len(ASSIGNMENT["milestones"]) - 1:
-            st.session_state.milestone_index += 1
-            st.rerun()
-
-# Evidence Pack generation
-st.divider()
-if st.button("Generate Evidence Pack (JSON)"):
-    st.session_state.evidence_json = build_evidence_pack()
-    st.success("Evidence Pack generated — use the sidebar button to download.")
+        "attachment
