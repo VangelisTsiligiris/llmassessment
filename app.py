@@ -288,7 +288,7 @@ def compute_similarity_report(final_text: str, llm_texts: List[str], sim_thresh:
             j = int(sims[i].argmax())
             s = float(sims[i, j])
             nearest = llm_segs[j]
-            edit = 1.0 - Levenshtein.normalized_similarity(fseg, nearest)  # 0..1 (1 very different)
+            edit = 1.0 - Levenshtein.normalized_similarity(fseg, nearest)  # 0..1 (1 = very different)
             rows.append({
                 "final_seg": excerpt(fseg, 300),
                 "nearest_llm": excerpt(nearest, 300),
@@ -299,16 +299,23 @@ def compute_similarity_report(final_text: str, llm_texts: List[str], sim_thresh:
                 high_tokens += len(fseg.split())
 
     elif SIM_BACKEND == "tfidf":
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+
         vectorizer = TfidfVectorizer().fit(finals + llm_segs)
         F = vectorizer.transform(finals)
         L = vectorizer.transform(llm_segs)
         sims = cosine_similarity(F, L)
+
         for i, fseg in enumerate(finals):
             j = int(sims[i].argmax())
             s = float(sims[i, j])
             nearest = llm_segs[j]
-            # cheap edit proxy
-            edit = 1.0 - (len(set(fseg.split()) & set(nearest.split())) / max(1, len(set(fseg.split() | set(nearest.split())))))
+            # cheap edit proxy: 1 - Jaccard over word sets
+            words_f = set(fseg.split())
+            words_l = set(nearest.split())
+            jaccard = len(words_f & words_l) / max(1, len(words_f | words_l))
+            edit = 1.0 - jaccard
             rows.append({
                 "final_seg": excerpt(fseg, 300),
                 "nearest_llm": excerpt(nearest, 300),
@@ -316,7 +323,7 @@ def compute_similarity_report(final_text: str, llm_texts: List[str], sim_thresh:
                 "edit_dist": round(edit, 3)
             })
             if s >= sim_thresh:
-                high_tokens += len(fseg.split()))
+                high_tokens += len(fseg.split())
 
     else:  # difflib fallback
         from difflib import SequenceMatcher
@@ -340,7 +347,8 @@ def compute_similarity_report(final_text: str, llm_texts: List[str], sim_thresh:
 
     mean_sim = 0.0 if not rows else round(sum(r["cosine"] for r in rows) / len(rows), 3)
     high_share = round(high_tokens / max(1, total_tokens), 3)
-    return {"backend": SIM_BACKEND, "mean": mean_sim, "high_share": high_share, "rows": rows[:40]}  # trim rows for UI
+    return {"backend": SIM_BACKEND, "mean": mean_sim, "high_share": high_share, "rows": rows[:40]}
+
 
 # ----------------------------
 # METRICS (process indicators)
