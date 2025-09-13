@@ -70,12 +70,12 @@ st.markdown("""
   font-size:.85rem; border:1px solid #ddd; background:white}
 .small-muted {color:#666; font-size:.9rem}
 
-/* Chat panel — shorter and with bottom padding so last line is visible */
+/* Chat panel — shorter + bottom padding so last line is visible */
 .chat-panel {
-  height: 58vh;                      /* was taller; this prevents clipping with the input */
+  height: 50vh;                      /* reduced so the form is always visible */
   overflow-y: auto;
   padding: .25rem .5rem 1.25rem .5rem; /* extra bottom padding */
-  margin-bottom: .75rem;             /* gap above the input form */
+  margin-bottom: .5rem;              /* gap above the input form */
   border:1px solid #eee;
   border-radius:10px;
   background:#fff;
@@ -83,6 +83,12 @@ st.markdown("""
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
+
+/* Chat form pinned near bottom */
+.chat-form { position: sticky; bottom: 8px; z-index: 11; background: #fff; padding-bottom: .25rem; }
+.chat-form .stForm { margin: 0; }
+.chat-form .stTextInput>div>div>input { height: 2.4rem; }
+.chat-form .stButton>button { height: 2.4rem; }
 
 /* Quill */
 .ql-toolbar.ql-snow { position: sticky; top: 0; z-index: 10; background:#fff; border-radius:10px 10px 0 0; }
@@ -93,9 +99,10 @@ st.markdown("""
 .toolbar .stButton>button {height:2.2rem}
 
 /* Bottom spacing (safety) */
-[data-testid="stBottomBlockContainer"] { padding-bottom: .75rem; }
+[data-testid="stBottomBlockContainer"] { padding-bottom: 1.25rem; }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
@@ -449,12 +456,11 @@ with left:
     chat_html = ['<div class="chat-panel">']
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
-        # escape text for HTML safety
         chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"])}</div>')
     chat_html.append("</div>")
     st.markdown("".join(chat_html), unsafe_allow_html=True)
 
-    # ---- Auto-scroll to the latest message (DO NOT MOVE ABOVE st.markdown) ----
+    # ---- Auto-scroll to the latest message (keep directly after st.markdown) ----
     components.html(
         """
         <script>
@@ -465,14 +471,20 @@ with left:
         height=0,
     )
 
-    # ---- Chat input (fixed below the scroll area) ----
+    # ---- Chat input (pinned near bottom) ----
+    st.markdown('<div class="chat-form">', unsafe_allow_html=True)
     with st.form("chat_form", clear_on_submit=True):
-        prompt = st.text_input(
-            "Ask for ideas, critique, examples…",
-            value="",
-            placeholder="Type and press Send"
-        )
-        send = st.form_submit_button("Send")
+        c1, c2 = st.columns([4,1])
+        with c1:
+            prompt = st.text_input(
+                "Ask for ideas, critique, examples…",
+                value="",
+                placeholder="Type and press Send",
+                label_visibility="collapsed",
+            )
+        with c2:
+            send = st.form_submit_button("Send")
+    st.markdown('</div>', unsafe_allow_html=True)
 
     if send and prompt.strip():
         st.session_state.chat.append({"role": "user", "text": prompt})
@@ -482,6 +494,7 @@ with left:
         log_event("chat_user", prompt, "")
         log_event("chat_llm", prompt, reply)
         st.rerun()
+
 
 
 with right:
