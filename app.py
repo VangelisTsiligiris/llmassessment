@@ -70,23 +70,16 @@ st.markdown("""
   font-size:.85rem; border:1px solid #ddd; background:white}
 .small-muted {color:#666; font-size:.9rem}
 
-/* Chat panel — shorter + bottom padding so last line is visible */
-.chat-panel {
-  height: 50vh;                      /* reduced so the form is always visible */
-  overflow-y: auto;
-  padding: .25rem .5rem 1.25rem .5rem; /* extra bottom padding */
-  margin-bottom: .5rem;              /* gap above the input form */
-  border:1px solid #eee;
-  border-radius:10px;
-  background:#fff;
+/* Chat layout: fixed-height column with scrollable list + visible form */
+.chat-wrap   { height: 72vh; display:flex; flex-direction:column; }
+.chat-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: .25rem .5rem 1rem .5rem; margin-bottom: .5rem;
+  border:1px solid #eee; border-radius:10px; background:#fff;
 }
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
-
-/* Chat form pinned near bottom */
-.chat-form { position: sticky; bottom: 8px; z-index: 11; background: #fff; padding-bottom: .25rem; }
-.chat-form .stForm { margin: 0; }
 .chat-form .stTextInput>div>div>input { height: 2.4rem; }
 .chat-form .stButton>button { height: 2.4rem; }
 
@@ -102,6 +95,7 @@ st.markdown("""
 [data-testid="stBottomBlockContainer"] { padding-bottom: 1.25rem; }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
@@ -452,26 +446,29 @@ left, right = st.columns([0.5, 0.5], gap="large")
 with left:
     st.subheader("💬 Assistant")
 
-    # ---- Render scrollable chat ----
-    chat_html = ['<div class="chat-panel">']
+    # ---- Chat container (fixed height) ----
+    st.markdown('<div class="chat-wrap">', unsafe_allow_html=True)
+
+    # ---- Scrollable messages ----
+    chat_html = ['<div class="chat-scroll">']
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
         chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"])}</div>')
     chat_html.append("</div>")
     st.markdown("".join(chat_html), unsafe_allow_html=True)
 
-    # ---- Auto-scroll to the latest message (keep directly after st.markdown) ----
+    # Auto-scroll to bottom of the scroll area
     components.html(
         """
         <script>
-          const p = parent.document.querySelector('.chat-panel');
+          const p = parent.document.querySelector('.chat-scroll');
           if (p) { p.scrollTop = p.scrollHeight; }
         </script>
         """,
         height=0,
     )
 
-    # ---- Chat input (pinned near bottom) ----
+    # ---- Chat input (always visible within chat-wrap) ----
     st.markdown('<div class="chat-form">', unsafe_allow_html=True)
     with st.form("chat_form", clear_on_submit=True):
         c1, c2 = st.columns([4,1])
@@ -485,6 +482,8 @@ with left:
         with c2:
             send = st.form_submit_button("Send")
     st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)  # end .chat-wrap
 
     if send and prompt.strip():
         st.session_state.chat.append({"role": "user", "text": prompt})
