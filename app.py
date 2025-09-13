@@ -50,6 +50,24 @@ except Exception:
 # ---------- App config ----------
 st.set_page_config(page_title="LLM Coursework Helper", layout="wide")
 
+# ---------- Light CSS polish ----------
+st.markdown("""
+<style>
+/* Compact page padding */
+.block-container {padding-top: 1rem; padding-bottom: 1rem;}
+/* Header bar */
+.header-bar {display:flex; align-items:center; gap:1rem; padding:.6rem 1rem; border:1px solid #e6e6e6; border-radius:12px; background:#fafafa;}
+.status-chip {display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.85rem; border:1px solid #ddd; background:white}
+.small-muted {color:#666; font-size:.9rem}
+.chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.25rem 0; border:1px solid #eee;}
+.chat-user {background:#eef7ff;}
+.chat-assistant {background:#f6f6f6;}
+.toolbar {display:flex; gap:.5rem; flex-wrap:wrap;}
+.toolbar button, .toolbar .stButton>button {height:2.2rem}
+.kpi {border:1px solid #eee; border-radius:10px; padding:.6rem .8rem; background:#fff}
+</style>
+""", unsafe_allow_html=True)
+
 # ---------- Simple pilot gate with User ID entry ----------
 def _gen_id(n=6):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
@@ -100,6 +118,12 @@ def segment_paragraphs(text: str):
         return []
     parts = [p.strip() for p in text.split("\n") if p.strip()]
     return parts
+
+def word_count(t: str) -> int:
+    return len((t or "").split())
+
+def char_count(t: str) -> int:
+    return len(t or "")
 
 # ---------- Secrets ----------
 def load_secrets():
@@ -157,9 +181,8 @@ def append_row_safe(ws, row):
     except Exception as e:
         st.warning(f"Append failed: {e}")
 
-# ---------- Session (initial) ----------
+# ---------- Session ----------
 if not st.session_state.get("user_id"):
-    # For cases where APP_PASSCODE is not set
     st.session_state["user_id"] = _gen_id()
 if "assignment_id" not in st.session_state:
     st.session_state.assignment_id = ASSIGNMENT_DEFAULT
@@ -168,9 +191,11 @@ if "chat" not in st.session_state:
 if "llm_outputs" not in st.session_state:
     st.session_state.llm_outputs = []
 if "draft_html" not in st.session_state:
-    st.session_state.draft_html = ""  # rich text (HTML)
+    st.session_state.draft_html = ""  # HTML from Quill
 if "report" not in st.session_state:
     st.session_state.report = None
+if "last_saved_at" not in st.session_state:
+    st.session_state.last_saved_at = None
 
 # ---------- Core ----------
 def ask_llm(prompt_text: str):
@@ -188,11 +213,11 @@ def ask_llm(prompt_text: str):
 def save_progress(user_id, assignment_id, draft_html, draft_text):
     row = [user_id, assignment_id, draft_html, draft_text, datetime.datetime.now().isoformat()]
     append_row_safe(DRAFTS_WS, row)
+    st.session_state.last_saved_at = datetime.datetime.now()
 
 def load_progress(user_id, assignment_id):
     """Return last saved draft_html (latest row) for this user+assignment."""
     try:
-        # Latest match if we iterate from bottom
         records = DRAFTS_WS.get_all_records()
         for r in reversed(records):
             if str(r.get("user_id","")).strip().upper() == user_id.strip().upper() and str(r.get("assignment_id","")).strip() == assignment_id.strip():
@@ -218,6 +243,8 @@ def compute_similarity_report(final_text, llm_texts, sim_thresh=SIM_THRESHOLD):
             rows.append({"final_seg": excerpt(fseg, 200), "nearest_llm": excerpt(nearest, 200), "cosine": round(s, 3)})
             if s >= sim_thresh: high_tokens += len(fseg.split())
     elif SIM_BACKEND == "tfidf":
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
         vectorizer = TfidfVectorizer().fit(finals + llm_segs)
         F = vectorizer.transform(finals); L = vectorizer.transform(llm_segs)
         sims = cosine_similarity(F, L)
@@ -272,105 +299,165 @@ def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
     buf.seek(0)
     return buf.read()
 
-# ---------- Sidebar ----------
-st.sidebar.write(f"**User ID:** `{st.session_state.user_id}`")
-st.sidebar.text_input("Assignment ID", key="assignment_id")
+# ---------- Header bar ----------
+with st.container():
+    st.markdown(
+        f"""
+        <div class="header-bar">
+          <div><strong>LLM Coursework Helper</strong></div>
+          <div class="status-chip">User: {st.session_state.user_id}</div>
+          <div class="status-chip">Assignment: {st.session_state.assignment_id}</div>
+          <div class="status-chip">Similarity: {SIM_BACKEND}</div>
+          <div class="small-muted">Last saved: {st.session_state.last_saved_at.strftime('%H:%M:%S') if st.session_state.last_saved_at else '—'}</div>
+        </div>
+        """, unsafe_allow_html=True
+    )
 
-# Quick load last saved (convenience)
-if st.sidebar.button("🔄 Load last saved draft"):
-    loaded_html = load_progress(st.session_state.user_id, st.session_state.assignment_id)
-    if loaded_html:
-        st.session_state.draft_html = loaded_html
-        st.sidebar.success("Loaded last saved draft.")
-        st.rerun()
-    else:
-        st.sidebar.warning("No saved draft found.")
+# ---------- Top toolbar ----------
+tcol1, tcol2, tcol3, tcol4 = st.columns([1.2, 1, 1, 1])
+with tcol1:
+    st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
+with tcol2:
+    if st.button("🔄 Load last draft"):
+        loaded_html = load_progress(st.session_state.user_id, st.session_state.assignment_id)
+        if loaded_html:
+            st.session_state.draft_html = loaded_html
+            st.success("Loaded last saved draft.")
+            st.rerun()
+        else:
+            st.warning("No saved draft found.")
+with tcol3:
+    # quick import
+    up = st.file_uploader("Import text/DOCX", type=["txt","docx"], label_visibility="collapsed")
+    if up is not None:
+        as_text = ""
+        if up.type == "text/plain" or up.name.lower().endswith(".txt"):
+            as_text = up.read().decode("utf-8", errors="ignore")
+        elif up.name.lower().endswith(".docx") and DOCX_OK:
+            try:
+                d = docx.Document(up)
+                as_text = "\n".join([p.text for p in d.paragraphs])
+            except Exception as e:
+                st.error(f"Failed to read DOCX: {e}")
+        if as_text:
+            st.session_state.draft_html = "<p>" + as_text.replace("\n", "</p><p>") + "</p>"
+            st.success("Imported into editor.")
+            st.rerun()
+with tcol4:
+    if st.button("🧹 Clear chat"):
+        st.session_state.chat = []
+        st.session_state.llm_outputs = []
+        st.toast("Chat cleared")
 
-# ---------- Tabs ----------
-tab_chat, tab_draft, tab_submit = st.tabs(["💬 Assistant", "📝 Draft", "📊 Evidence & Submit"])
+st.divider()
 
-with tab_chat:
-    st.header("LLM Assistant")
+# ---------- Two-column main: Assistant (left) | Draft (right) ----------
+left, right = st.columns([0.55, 0.45], gap="large")
+
+with left:
+    st.subheader("💬 Assistant")
+    # Chat history
     for m in st.session_state.chat:
-        with st.chat_message(m["role"]):
-            st.markdown(m["text"])
-    if prompt := st.chat_input("Ask for ideas, critique, examples..."):
-        st.session_state.chat.append({"role": "user", "text": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        reply, latency = ask_llm(prompt)
-        st.session_state.chat.append({"role": "assistant", "text": reply})
-        st.session_state.llm_outputs.append(reply)
-        with st.chat_message("assistant"):
-            st.markdown(reply)
-        append_row_safe(EVENTS_WS, [datetime.datetime.now().isoformat(), st.session_state.user_id,
-                                    st.session_state.assignment_id, len(st.session_state.chat),
-                                    "chat", prompt, reply])
+        css = "chat-user" if m["role"] == "user" else "chat-assistant"
+        st.markdown(f'<div class="chat-bubble {css}">{m["text"]}</div>', unsafe_allow_html=True)
 
-with tab_draft:
-    st.header("Draft your coursework")
-    # Rich editor returns HTML when html=True
+with right:
+    st.subheader("📝 Draft")
     st.session_state.draft_html = st_quill(
         value=st.session_state.draft_html,
         placeholder="Write here…",
         html=True,
         key="draft_editor",
     )
+    # Live KPIs
+    plain = html_to_text(st.session_state.draft_html)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Words", word_count(plain))
+    k2.metric("Characters", char_count(plain))
+    k3.metric("LLM Responses", len(st.session_state.llm_outputs))
 
-    col1, col2 = st.columns(2)
-    with col1:
+    # Draft actions
+    bcol1, bcol2, bcol3 = st.columns([1,1,1])
+    with bcol1:
         if st.button("💾 Save draft"):
-            plain = html_to_text(st.session_state.draft_html)
             save_progress(st.session_state.user_id, st.session_state.assignment_id,
                           st.session_state.draft_html, plain)
-            st.success("Draft saved")
-    with col2:
-        if st.button("🔄 Load last saved draft (tab)"):
-            loaded_html = load_progress(st.session_state.user_id, st.session_state.assignment_id)
-            if loaded_html:
-                st.session_state.draft_html = loaded_html
-                st.success("Loaded last saved draft.")
-                st.rerun()
+            st.toast("Draft saved")
+    with bcol2:
+        if st.button("📊 Run similarity"):
+            if plain.strip() and st.session_state.llm_outputs:
+                report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
+                st.session_state.report = report
+                st.success(f"Mean: {report['mean']} | High-sim: {report['high_share']*100:.1f}%")
             else:
-                st.warning("No saved draft found.")
+                st.warning("Need draft text + at least one LLM response first.")
+    with bcol3:
+        if st.button("⬇️ Export evidence (DOCX)"):
+            try:
+                rep = st.session_state.get("report", {"backend": "none","mean":0,"high_share":0,"rows":[]})
+                data = export_evidence_docx(st.session_state.user_id,
+                                            st.session_state.assignment_id,
+                                            st.session_state.chat,
+                                            st.session_state.draft_html,
+                                            rep)
+                st.download_button("Download DOCX", data=data,
+                                   file_name=f"evidence_{st.session_state.user_id}.docx",
+                                   mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                   use_container_width=True)
+            except Exception as e:
+                st.error(f"Export failed: {e}")
 
-with tab_submit:
-    st.header("Evidence & Submission")
-    final_plain = html_to_text(st.session_state.draft_html)
+st.divider()
 
-    if st.button("📊 Run Similarity Report"):
-        if final_plain.strip() and st.session_state.llm_outputs:
-            report = compute_similarity_report(final_plain, st.session_state.llm_outputs, SIM_THRESHOLD)
-            st.session_state.report = report
-            st.success(f"Mean: {report['mean']} | High-sim share: {report['high_share']*100:.1f}%")
-            with st.expander("Detailed matches"):
-                for r in report["rows"]:
-                    st.markdown(f"- Cosine {r['cosine']}: Final `{r['final_seg']}` vs LLM `{r['nearest_llm']}`")
-        else:
-            st.warning("Need draft text + at least one LLM response first.")
+# ---------- Chat input (bottom of page) ----------
+if prompt := st.chat_input("Ask for ideas, critique, examples…"):
+    st.session_state.chat.append({"role": "user", "text": prompt})
+    reply, latency = ask_llm(prompt)
+    st.session_state.chat.append({"role": "assistant", "text": reply})
+    st.session_state.llm_outputs.append(reply)
+    append_row_safe(EVENTS_WS, [datetime.datetime.now().isoformat(), st.session_state.user_id,
+                                st.session_state.assignment_id, len(st.session_state.chat),
+                                "chat", prompt, reply])
+    st.rerun()
 
-    if st.button("📤 Submit to Sheets"):
-        words = len(final_plain.split()); chars = len(final_plain)
+# ---------- Submit panel ----------
+st.subheader("📤 Submit to Google Sheets")
+cc1, cc2, cc3 = st.columns([1,1,2])
+with cc1:
+    if st.button("Submit now"):
+        words = word_count(plain); chars = char_count(plain)
         rep = st.session_state.get("report", {"mean": 0.0, "high_share": 0.0})
         append_row_safe(SUBMIS_WS, [datetime.datetime.now().isoformat(),
                                     st.session_state.user_id,
                                     st.session_state.assignment_id,
                                     words, chars,
-                                    sha256(final_plain),
+                                    sha256(plain),
                                     rep.get("mean",0.0),
                                     rep.get("high_share",0.0)])
         st.success("Submission logged")
-
-    if st.button("⬇️ Export Evidence as DOCX"):
-        try:
-            rep = st.session_state.get("report", {"backend": "none","mean":0,"high_share":0,"rows":[]})
-            data = export_evidence_docx(st.session_state.user_id,
+with cc2:
+    if st.button("Run similarity & submit"):
+        if plain.strip() and st.session_state.llm_outputs:
+            report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
+            st.session_state.report = report
+            words = word_count(plain); chars = char_count(plain)
+            append_row_safe(SUBMIS_WS, [datetime.datetime.now().isoformat(),
+                                        st.session_state.user_id,
                                         st.session_state.assignment_id,
-                                        st.session_state.chat,
-                                        st.session_state.draft_html,
-                                        rep)
-            st.download_button("Download DOCX", data=data,
-                               file_name=f"evidence_{st.session_state.user_id}.docx",
-                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        except Exception as e:
-            st.error(f"Export failed: {e}")
+                                        words, chars,
+                                        sha256(plain),
+                                        report["mean"],
+                                        report["high_share"]])
+            st.success("Similarity computed & submission logged")
+        else:
+            st.warning("Need draft text + at least one LLM response first.")
+with cc3:
+    rep = st.session_state.get("report")
+    if rep:
+        kcol1, kcol2, kcol3 = st.columns(3)
+        kcol1.metric("Mean similarity", rep["mean"])
+        kcol2.metric("High-sim share", f"{rep['high_share']*100:.1f}%")
+        kcol3.metric("Backend", rep["backend"])
+        with st.expander("Detailed matches", expanded=False):
+            for r in rep["rows"]:
+                st.markdown(f"- **{r['cosine']}** → Final: {r['final_seg']}  \n  LLM: {r['nearest_llm']}")
