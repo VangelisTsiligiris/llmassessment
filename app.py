@@ -1,4 +1,4 @@
-import os, io, json, time, datetime, hashlib, random, string
+import os, io, json, time, datetime, hashlib, random, string, html as _html
 import streamlit as st
 from streamlit_quill import st_quill  # rich editor
 
@@ -55,32 +55,35 @@ st.set_page_config(
     menu_items={"Get help": None, "Report a bug": None, "About": None},
 )
 
-# ---------- Light CSS polish ----------
+# ---------- CSS (layout + scrollable chat) ----------
 st.markdown("""
 <style>
 .block-container {padding-top: 1rem; padding-bottom: 1rem;}
 .stApp header, [data-testid="stToolbar"], [data-testid="stHeaderActionButtons"] {
   z-index: 1000 !important; position: relative;
 }
+/* Header bar */
 .header-bar {display:flex; align-items:center; gap:.75rem; padding:.6rem 1rem;
   border:1px solid #e6e6e6; border-radius:12px; background:#fafafa;}
 .status-chip {display:inline-block; padding:.15rem .5rem; border-radius:999px;
   font-size:.85rem; border:1px solid #ddd; background:white}
 .small-muted {color:#666; font-size:.9rem}
 
-/* Quill */
-.ql-toolbar.ql-snow { position: sticky; top: 0; z-index: 10; background:#fff; border-radius:10px 10px 0 0; }
-.ql-container.ql-snow { min-height: 380px; border-radius:0 0 10px 10px; }
-
-/* Chat */
-.chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.25rem 0; border:1px solid #eee;}
+/* Chat panel */
+.chat-panel {height: 64vh; overflow-y: auto; padding-right: .5rem; border:1px solid #eee; border-radius:10px; background:#fff;}
+.chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
+
+/* Quill */
+.ql-toolbar.ql-snow { position: sticky; top: 0; z-index: 10; background:#fff; border-radius:10px 10px 0 0; }
+.ql-container.ql-snow { min-height: 480px; border-radius:0 0 10px 10px; }
 
 /* Buttons */
 .toolbar {display:flex; gap:.5rem; flex-wrap:wrap;}
 .toolbar .stButton>button {height:2.2rem}
 
+/* Bottom spacing for built-in chat input (unused now) */
 [data-testid="stBottomBlockContainer"] { padding-bottom: .75rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -123,6 +126,7 @@ if APP_PASSCODE and not st.session_state["__auth_ok"]:
 SPREADSHEET_KEY    = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
 ASSIGNMENT_DEFAULT = os.getenv("ASSIGNMENT_ID", "GENERIC")
 SIM_THRESHOLD      = float(os.getenv("SIM_THRESHOLD", "0.85"))
+AUTO_SAVE_SECONDS  = int(os.getenv("AUTO_SAVE_SECONDS", "60"))  # autosave cadence
 
 
 # ---------- Helpers ----------
@@ -144,13 +148,8 @@ def word_count(t: str) -> int:
 def char_count(t: str) -> int:
     return len(t or "")
 
-# Make streamlit-quill calls robust across versions
+# Robust streamlit-quill wrapper (handles old/new versions)
 def render_quill_html(key: str, initial_html: str) -> str:
-    """
-    Return HTML string from the Quill editor, regardless of streamlit-quill version.
-    Tries html=True first (newer versions), then falls back.
-    """
-    # Try new API (returns str or dict with 'html')
     try:
         out = st_quill(value=initial_html, placeholder="Write here…", html=True, key=key)
         if isinstance(out, dict) and "html" in out and out["html"]:
@@ -158,14 +157,10 @@ def render_quill_html(key: str, initial_html: str) -> str:
         if isinstance(out, str) and out:
             return out
     except TypeError:
-        # Older versions: no 'html' kwarg
         try:
             out = st_quill(value=initial_html, placeholder="Write here…", key=key)
         except TypeError:
-            # Very old: positional only
             out = st_quill(initial_html)
-
-    # Normalise older return types (delta dict)
     if isinstance(out, dict):
         if "html" in out and out["html"]:
             return out["html"]
@@ -230,7 +225,7 @@ def _get_or_create_ws(title, headers):
 
 EVENTS_WS = _get_or_create_ws("events", ["timestamp","user_id","assignment_id","turn_count","event_type","prompt","response"])
 DRAFTS_WS = _get_or_create_ws("drafts", ["user_id","assignment_id","draft_html","draft_text","last_updated"])
-SUBMIS_WS = _get_or_create_ws("submissions", ["timestamp","user_id","assignment_id","word_count","char_count","final_sha256","mean_similarity","high_share"])
+# SUBMISSIONS sheet intentionally not used (you requested no manual submission)
 
 def append_row_safe(ws, row):
     try:
@@ -254,6 +249,10 @@ if "report" not in st.session_state:
     st.session_state.report = None
 if "last_saved_at" not in st.session_state:
     st.session_state.last_saved_at = None
+if "last_autosave_at" not in st.session_state:
+    st.session_state.last_autosave_at = None
+if "last_saved_html" not in st.session_state:
+    st.session_state.last_saved_html = ""
 
 
 # ---------- Core ----------
@@ -269,10 +268,23 @@ def ask_llm(prompt_text: str):
     latency = round((time.time() - start) * 1000)
     return "".join(chunks), latency
 
-def save_progress(user_id, assignment_id, draft_html, draft_text):
-    row = [user_id, assignment_id, draft_html, draft_text, datetime.datetime.now().isoformat()]
-    append_row_safe(DRAFTS_WS, row)
+def log_event(event_type: str, prompt: str, response: str):
+    append_row_safe(EVENTS_WS, [
+        datetime.datetime.now().isoformat(),
+        st.session_state.user_id,
+        st.session_state.assignment_id,
+        len(st.session_state.chat),
+        event_type,
+        excerpt(prompt, 500),
+        excerpt(response, 1000),
+    ])
+
+def save_progress(user_id, assignment_id, draft_html, draft_text, silent=False):
+    append_row_safe(DRAFTS_WS, [user_id, assignment_id, draft_html, draft_text, datetime.datetime.now().isoformat()])
     st.session_state.last_saved_at = datetime.datetime.now()
+    st.session_state.last_saved_html = draft_html
+    if not silent:
+        st.toast("Draft saved")
 
 def load_progress(user_id, assignment_id):
     """Return last saved draft_html (latest row) for this user+assignment."""
@@ -284,6 +296,14 @@ def load_progress(user_id, assignment_id):
     except Exception:
         return ""
     return ""
+
+def maybe_autosave(draft_html, draft_text):
+    now = time.time()
+    last_ts = st.session_state.last_autosave_at or 0
+    changed = (draft_html or "") != (st.session_state.last_saved_html or "")
+    if changed and (now - last_ts) >= AUTO_SAVE_SECONDS:
+        save_progress(st.session_state.user_id, st.session_state.assignment_id, draft_html, draft_text, silent=True)
+        st.session_state.last_autosave_at = now
 
 def compute_similarity_report(final_text, llm_texts, sim_thresh=SIM_THRESHOLD):
     finals = segment_paragraphs(final_text)
@@ -332,7 +352,7 @@ def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
     final_text = html_to_text(draft_html)
 
     d = docx.Document()
-    d.add_heading("Coursework Evidence Report", 0)
+    d.add_heading("Coursework Evidence Pack", 0)
     d.add_paragraph(f"User ID: {user_id}")
     d.add_paragraph(f"Assignment ID: {assignment_id}")
     d.add_paragraph(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -410,18 +430,35 @@ with tcol4:
 
 st.divider()
 
-# ---------- Two-column main: Assistant (left) | Draft (right) ----------
-left, right = st.columns([0.55, 0.45], gap="large")
+# ---------- Two-column main: Assistant (left, scrollable) | Draft (right, fixed) ----------
+left, right = st.columns([0.5, 0.5], gap="large")
 
 with left:
     st.subheader("💬 Assistant")
+    # Scrollable chat
+    chat_html = ['<div class="chat-panel">']
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
-        st.markdown(f'<div class="chat-bubble {css}">{m["text"]}</div>', unsafe_allow_html=True)
+        chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"])}</div>')
+    chat_html.append("</div>")
+    st.markdown("".join(chat_html), unsafe_allow_html=True)
+
+    # Inline chat input (always visible)
+    with st.form("chat_form", clear_on_submit=True):
+        prompt = st.text_input("Ask for ideas, critique, examples…", value="", placeholder="Type and press Send")
+        send = st.form_submit_button("Send")
+    if send and prompt.strip():
+        st.session_state.chat.append({"role": "user", "text": prompt})
+        reply, latency = ask_llm(prompt)
+        st.session_state.chat.append({"role": "assistant", "text": reply})
+        st.session_state.llm_outputs.append(reply)
+        log_event("chat_user", prompt, "")
+        log_event("chat_llm", prompt, reply)
+        st.rerun()
 
 with right:
     st.subheader("📝 Draft")
-    # Robust editor (handles all streamlit-quill versions)
+    # Rich editor (fixed panel)
     st.session_state.draft_html = render_quill_html("draft_editor", st.session_state.draft_html)
 
     # Live KPIs
@@ -431,19 +468,22 @@ with right:
     k2.metric("Characters", char_count(plain))
     k3.metric("LLM Responses", len(st.session_state.llm_outputs))
 
+    # Auto-save if changed and cadence reached
+    maybe_autosave(st.session_state.draft_html, plain)
+
     # Draft actions
     bcol1, bcol2, bcol3 = st.columns([1,1,1])
     with bcol1:
         if st.button("💾 Save draft"):
             save_progress(st.session_state.user_id, st.session_state.assignment_id,
-                          st.session_state.draft_html, plain)
-            st.toast("Draft saved")
+                          st.session_state.draft_html, plain, silent=False)
     with bcol2:
         if st.button("📊 Run similarity"):
             if plain.strip() and st.session_state.llm_outputs:
                 report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
                 st.session_state.report = report
                 st.success(f"Mean: {report['mean']} | High-sim: {report['high_share']*100:.1f}%")
+                log_event("similarity_run", f"mean={report['mean']}, high_share={report['high_share']}", "")
             else:
                 st.warning("Need draft text + at least one LLM response first.")
     with bcol3:
@@ -459,60 +499,6 @@ with right:
                                    file_name=f"evidence_{st.session_state.user_id}.docx",
                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                    use_container_width=True)
+                log_event("evidence_export", "", "docx")
             except Exception as e:
                 st.error(f"Export failed: {e}")
-
-st.divider()
-
-# ---------- Chat input (bottom of page) ----------
-if prompt := st.chat_input("Ask for ideas, critique, examples…"):
-    st.session_state.chat.append({"role": "user", "text": prompt})
-    reply, latency = ask_llm(prompt)
-    st.session_state.chat.append({"role": "assistant", "text": reply})
-    st.session_state.llm_outputs.append(reply)
-    append_row_safe(EVENTS_WS, [datetime.datetime.now().isoformat(), st.session_state.user_id,
-                                st.session_state.assignment_id, len(st.session_state.chat),
-                                "chat", prompt, reply])
-    st.rerun()
-
-# ---------- Submit panel ----------
-st.subheader("📤 Submit to Google Sheets")
-cc1, cc2, cc3 = st.columns([1,1,2])
-with cc1:
-    if st.button("Submit now"):
-        words = word_count(plain); chars = char_count(plain)
-        rep = st.session_state.get("report", {"mean": 0.0, "high_share": 0.0})
-        append_row_safe(SUBMIS_WS, [datetime.datetime.now().isoformat(),
-                                    st.session_state.user_id,
-                                    st.session_state.assignment_id,
-                                    words, chars,
-                                    sha256(plain),
-                                    rep.get("mean",0.0),
-                                    rep.get("high_share",0.0)])
-        st.success("Submission logged")
-with cc2:
-    if st.button("Run similarity & submit"):
-        if plain.strip() and st.session_state.llm_outputs:
-            report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
-            st.session_state.report = report
-            words = word_count(plain); chars = char_count(plain)
-            append_row_safe(SUBMIS_WS, [datetime.datetime.now().isoformat(),
-                                        st.session_state.user_id,
-                                        st.session_state.assignment_id,
-                                        words, chars,
-                                        sha256(plain),
-                                        report["mean"],
-                                        report["high_share"]])
-            st.success("Similarity computed & submission logged")
-        else:
-            st.warning("Need draft text + at least one LLM response first.")
-with cc3:
-    rep = st.session_state.get("report")
-    if rep:
-        kcol1, kcol2, kcol3 = st.columns(3)
-        kcol1.metric("Mean similarity", rep["mean"])
-        kcol2.metric("High-sim share", f"{rep['high_share']*100:.1f}%")
-        kcol3.metric("Backend", rep["backend"])
-        with st.expander("Detailed matches", expanded=False):
-            for r in rep["rows"]:
-                st.markdown(f"- **{r['cosine']}** → Final: {r['final_seg']}  \n  LLM: {r['nearest_llm']}")
