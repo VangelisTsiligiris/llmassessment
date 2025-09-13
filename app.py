@@ -60,41 +60,30 @@ st.set_page_config(
 st.markdown("""
 <style>
 .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-.stApp header, [data-testid="stToolbar"], [data-testid="stHeaderActionButtons"] {
-  z-index: 1000 !important; position: relative;
-}
-/* Header bar */
-.header-bar {display:flex; align-items:center; gap:.75rem; padding:.6rem 1rem;
-  border:1px solid #e6e6e6; border-radius:12px; background:#fafafa;}
-.status-chip {display:inline-block; padding:.15rem .5rem; border-radius:999px;
-  font-size:.85rem; border:1px solid #ddd; background:white}
-.small-muted {color:#666; font-size:.9rem}
 
-/* Chat layout: fixed-height column with scrollable list + visible form */
-.chat-wrap   { height: 72vh; display:flex; flex-direction:column; }
+/* Layout columns */
+.left-col, .right-col {display:flex; flex-direction:column; height:75vh;}
+
+/* Assistant */
 .chat-scroll {
-  flex: 1; min-height: 0; overflow-y: auto;
-  padding: .25rem .5rem 1rem .5rem; margin-bottom: .5rem;
-  border:1px solid #eee; border-radius:10px; background:#fff;
+  flex:1; min-height:0; overflow-y:auto;
+  padding:.5rem; border:1px solid #eee; border-radius:10px; background:#fff;
 }
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
-.chat-form .stTextInput>div>div>input { height: 2.4rem; }
-.chat-form .stButton>button { height: 2.4rem; }
+.chat-form {margin-top:.5rem;}
 
-/* Quill */
-.ql-toolbar.ql-snow { position: sticky; top: 0; z-index: 10; background:#fff; border-radius:10px 10px 0 0; }
-.ql-container.ql-snow { min-height: 480px; border-radius:0 0 10px 10px; }
-
-/* Buttons */
-.toolbar {display:flex; gap:.5rem; flex-wrap:wrap;}
-.toolbar .stButton>button {height:2.2rem}
-
-/* Bottom spacing (safety) */
-[data-testid="stBottomBlockContainer"] { padding-bottom: 1.25rem; }
+/* Draft editor */
+.editor-box {
+  flex:1; min-height:0; overflow-y:auto;
+  border:1px solid #eee; border-radius:10px;
+}
+.ql-container.ql-snow {min-height:100%; border:none;}
+.ql-toolbar.ql-snow {border:none; border-bottom:1px solid #ddd;}
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
@@ -446,10 +435,9 @@ left, right = st.columns([0.5, 0.5], gap="large")
 with left:
     st.subheader("💬 Assistant")
 
-    # ---- Chat container (fixed height) ----
-    st.markdown('<div class="chat-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="left-col">', unsafe_allow_html=True)
 
-    # ---- Scrollable messages ----
+    # Scrollable chat
     chat_html = ['<div class="chat-scroll">']
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
@@ -457,33 +445,15 @@ with left:
     chat_html.append("</div>")
     st.markdown("".join(chat_html), unsafe_allow_html=True)
 
-    # Auto-scroll to bottom of the scroll area
-    components.html(
-        """
-        <script>
-          const p = parent.document.querySelector('.chat-scroll');
-          if (p) { p.scrollTop = p.scrollHeight; }
-        </script>
-        """,
-        height=0,
-    )
-
-    # ---- Chat input (always visible within chat-wrap) ----
-    st.markdown('<div class="chat-form">', unsafe_allow_html=True)
+    # Prompt box always at bottom of column
     with st.form("chat_form", clear_on_submit=True):
         c1, c2 = st.columns([4,1])
         with c1:
-            prompt = st.text_input(
-                "Ask for ideas, critique, examples…",
-                value="",
-                placeholder="Type and press Send",
-                label_visibility="collapsed",
-            )
+            prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
         with c2:
             send = st.form_submit_button("Send")
-    st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)  # end .chat-wrap
+    st.markdown('</div>', unsafe_allow_html=True)
 
     if send and prompt.strip():
         st.session_state.chat.append({"role": "user", "text": prompt})
@@ -496,10 +466,18 @@ with left:
 
 
 
+
 with right:
     st.subheader("📝 Draft")
-    # Rich editor (fixed panel)
-    st.session_state.draft_html = render_quill_html("draft_editor", st.session_state.draft_html)
+    st.markdown('<div class="right-col">', unsafe_allow_html=True)
+
+    # Draft editor
+    st.session_state.draft_html = st_quill(
+        value=st.session_state.draft_html,
+        placeholder="Write here…",
+        key="editor",
+        height=500,
+    )
 
     # Live KPIs
     plain = html_to_text(st.session_state.draft_html)
@@ -508,37 +486,63 @@ with right:
     k2.metric("Characters", char_count(plain))
     k3.metric("LLM Responses", len(st.session_state.llm_outputs))
 
-    # Auto-save if changed and cadence reached
+    # Auto-save if changed
     maybe_autosave(st.session_state.draft_html, plain)
 
-    # Draft actions
-    bcol1, bcol2, bcol3 = st.columns([1,1,1])
-    with bcol1:
+    # Buttons row
+    c1, c2, c3 = st.columns(3)
+    with c1:
         if st.button("💾 Save draft"):
-            save_progress(st.session_state.user_id, st.session_state.assignment_id,
-                          st.session_state.draft_html, plain, silent=False)
-    with bcol2:
+            save_progress(
+                st.session_state.user_id,
+                st.session_state.assignment_id,
+                st.session_state.draft_html,
+                plain,
+                silent=False
+            )
+    with c2:
         if st.button("📊 Run similarity"):
             if plain.strip() and st.session_state.llm_outputs:
-                report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
+                report = compute_similarity_report(
+                    plain,
+                    st.session_state.llm_outputs,
+                    SIM_THRESHOLD
+                )
                 st.session_state.report = report
-                st.success(f"Mean: {report['mean']} | High-sim: {report['high_share']*100:.1f}%")
-                log_event("similarity_run", f"mean={report['mean']}, high_share={report['high_share']}", "")
+                st.success(
+                    f"Mean: {report['mean']} | "
+                    f"High-sim: {report['high_share']*100:.1f}%"
+                )
+                log_event(
+                    "similarity_run",
+                    f"mean={report['mean']}, high_share={report['high_share']}",
+                    ""
+                )
             else:
                 st.warning("Need draft text + at least one LLM response first.")
-    with bcol3:
+    with c3:
         if st.button("⬇️ Export evidence (DOCX)"):
             try:
-                rep = st.session_state.get("report", {"backend": "none","mean":0,"high_share":0,"rows":[]})
-                data = export_evidence_docx(st.session_state.user_id,
-                                            st.session_state.assignment_id,
-                                            st.session_state.chat,
-                                            st.session_state.draft_html,
-                                            rep)
-                st.download_button("Download DOCX", data=data,
-                                   file_name=f"evidence_{st.session_state.user_id}.docx",
-                                   mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                   use_container_width=True)
+                rep = st.session_state.get(
+                    "report",
+                    {"backend": "none", "mean": 0, "high_share": 0, "rows": []}
+                )
+                data = export_evidence_docx(
+                    st.session_state.user_id,
+                    st.session_state.assignment_id,
+                    st.session_state.chat,
+                    st.session_state.draft_html,
+                    rep
+                )
+                st.download_button(
+                    "Download DOCX",
+                    data=data,
+                    file_name=f"evidence_{st.session_state.user_id}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
                 log_event("evidence_export", "", "docx")
             except Exception as e:
                 st.error(f"Export failed: {e}")
+
+    st.markdown('</div>', unsafe_allow_html=True)
