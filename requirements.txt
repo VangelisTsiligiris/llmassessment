@@ -1,7 +1,8 @@
 streamlit
+streamlit-quill
+beautifulsoup4
 google-generativeai
 gspread
 google-auth
 scikit-learn
 python-docx
-reportlab
