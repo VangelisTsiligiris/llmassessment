@@ -1,5 +1,6 @@
 import os, io, json, time, datetime, hashlib, random, string, html as _html
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_quill import st_quill  # rich editor
 
 # ---------- Optional libs ----------
@@ -69,8 +70,16 @@ st.markdown("""
   font-size:.85rem; border:1px solid #ddd; background:white}
 .small-muted {color:#666; font-size:.9rem}
 
-/* Chat panel */
-.chat-panel {height: 64vh; overflow-y: auto; padding-right: .5rem; border:1px solid #eee; border-radius:10px; background:#fff;}
+/* Chat panel — shorter and with bottom padding so last line is visible */
+.chat-panel {
+  height: 58vh;                      /* was taller; this prevents clipping with the input */
+  overflow-y: auto;
+  padding: .25rem .5rem 1.25rem .5rem; /* extra bottom padding */
+  margin-bottom: .75rem;             /* gap above the input form */
+  border:1px solid #eee;
+  border-radius:10px;
+  background:#fff;
+}
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
@@ -83,10 +92,11 @@ st.markdown("""
 .toolbar {display:flex; gap:.5rem; flex-wrap:wrap;}
 .toolbar .stButton>button {height:2.2rem}
 
-/* Bottom spacing for built-in chat input (unused now) */
+/* Bottom spacing (safety) */
 [data-testid="stBottomBlockContainer"] { padding-bottom: .75rem; }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ---------- Pilot gate with User ID ----------
@@ -432,21 +442,38 @@ st.divider()
 
 # ---------- Two-column main: Assistant (left, scrollable) | Draft (right, fixed) ----------
 left, right = st.columns([0.5, 0.5], gap="large")
-
 with left:
     st.subheader("💬 Assistant")
-    # Scrollable chat
+
+    # ---- Render scrollable chat ----
     chat_html = ['<div class="chat-panel">']
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
+        # escape text for HTML safety
         chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"])}</div>')
     chat_html.append("</div>")
     st.markdown("".join(chat_html), unsafe_allow_html=True)
 
-    # Inline chat input (always visible)
+    # ---- Auto-scroll to the latest message (DO NOT MOVE ABOVE st.markdown) ----
+    components.html(
+        """
+        <script>
+          const p = parent.document.querySelector('.chat-panel');
+          if (p) { p.scrollTop = p.scrollHeight; }
+        </script>
+        """,
+        height=0,
+    )
+
+    # ---- Chat input (fixed below the scroll area) ----
     with st.form("chat_form", clear_on_submit=True):
-        prompt = st.text_input("Ask for ideas, critique, examples…", value="", placeholder="Type and press Send")
+        prompt = st.text_input(
+            "Ask for ideas, critique, examples…",
+            value="",
+            placeholder="Type and press Send"
+        )
         send = st.form_submit_button("Send")
+
     if send and prompt.strip():
         st.session_state.chat.append({"role": "user", "text": prompt})
         reply, latency = ask_llm(prompt)
@@ -455,6 +482,7 @@ with left:
         log_event("chat_user", prompt, "")
         log_event("chat_llm", prompt, reply)
         st.rerun()
+
 
 with right:
     st.subheader("📝 Draft")
