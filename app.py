@@ -1,6 +1,7 @@
 import os, io, json, time, datetime, hashlib, random, string, html as _html
 import streamlit as st
 from streamlit_quill import st_quill  # rich editor
+from streamlit.components.v1 import html as st_html
 
 # ---------- Optional libs ----------
 try:
@@ -86,6 +87,7 @@ def _gen_id(n=6): return ''.join(random.choices(string.ascii_uppercase + string.
 APP_PASSCODE = os.getenv("APP_PASSCODE") or st.secrets.get("env", {}).get("APP_PASSCODE")
 st.session_state.setdefault("__auth_ok", False)
 st.session_state.setdefault("user_id", None)
+st.session_state.setdefault("pending_prompt", None)
 
 if APP_PASSCODE and not st.session_state["__auth_ok"]:
     st.title("Pilot access")
@@ -394,37 +396,69 @@ with t3:
 left, right = st.columns([0.5, 0.5], gap="large")
 
 # LEFT: Assistant
+# LEFT — Assistant
 with left:
     st.subheader("💬 Assistant")
-    st.markdown('<div class="left-col">', unsafe_allow_html=True)
 
-    # Scrollable chat
-    chat_html = ['<div class="chat-scroll">']
-    for m in st.session_state.chat:
-        css = "chat-user" if m["role"] == "user" else "chat-assistant"
-        chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"] or "")}</div>')
-    chat_html.append("</div>")
-    st.markdown("".join(chat_html), unsafe_allow_html=True)
+    # --- Render chat in a fixed-height, scrollable box with auto-scroll ---
+    bubbles = []
+    if not st.session_state.chat:
+        bubbles.append(
+            '<div style="border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090; '
+            'padding:.6rem .8rem; border-radius:10px;">No messages yet — ask for ideas, critique, or examples.</div>'
+        )
+    else:
+        for m in st.session_state.chat:
+            css_bg = "#eef7ff" if m["role"] == "user" else "#f6f6f6"
+            bubbles.append(
+                f'<div style="border:1px solid #eee; background:{css_bg}; '
+                f'border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; line-height:1.45;">'
+                f'{_html.escape(m.get("text",""))}'
+                f'</div>'
+            )
 
-    # Sticky prompt at bottom
-    st.markdown('<div class="chat-form">', unsafe_allow_html=True)
+    chat_html = f"""
+    <div id="chatbox" style="
+        height: 420px; overflow-y:auto;
+        border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem;">
+        {''.join(bubbles)}
+    </div>
+    <script>
+      const box = document.getElementById('chatbox');
+      if (box) {{ box.scrollTop = box.scrollHeight; }}
+    </script>
+    """
+    st_html(chat_html, height=450)
+
+    # --- Prompt form just below the chat ---
     with st.form("chat_form", clear_on_submit=True):
-        c1, c2 = st.columns([4,1])
+        c1, c2 = st.columns([4, 1])
         with c1:
             prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
         with c2:
             send = st.form_submit_button("Send")
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
+    # When user clicks Send: show their message immediately, then generate reply on next run
     if send and prompt.strip():
+        # 1) append user message so it renders immediately
         st.session_state.chat.append({"role": "user", "text": prompt})
-        reply, latency = ask_llm(prompt)
-        st.session_state.chat.append({"role": "assistant", "text": reply})
-        st.session_state.llm_outputs.append(reply)
         log_event("chat_user", prompt, "")
-        log_event("chat_llm", prompt, reply)
+
+        # 2) mark prompt as pending and rerun (UI will show the prompt now)
+        st.session_state.pending_prompt = prompt
         st.rerun()
+
+    # If there is a pending prompt, generate the reply *after* rendering the chat UI above
+    if st.session_state.pending_prompt:
+        with st.spinner("Generating response…"):
+            p = st.session_state.pending_prompt
+            st.session_state.pending_prompt = None  # clear flag
+            reply, latency = ask_llm(p)
+            st.session_state.chat.append({"role": "assistant", "text": reply})
+            st.session_state.llm_outputs.append(reply)
+            log_event("chat_llm", p, reply)
+        st.rerun()
+
 
 # RIGHT: Draft
 with right:
