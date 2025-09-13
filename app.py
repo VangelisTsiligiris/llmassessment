@@ -426,19 +426,20 @@ with left:
     # --- Render chat in a fixed-height, scrollable box with auto-scroll ---
     bubbles = []
     if not st.session_state.chat:
-        bubbles.append(
-            '<div style="border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090; '
-            'padding:.6rem .8rem; border-radius:10px;">No messages yet — ask for ideas, critique, or examples.</div>'
-        )
+      bubbles.append(
+        '<div class="chat-empty">No messages yet — ask for ideas, critique, or examples.</div>'
+     )
     else:
-        for m in st.session_state.chat:
-            css_bg = "#eef7ff" if m["role"] == "user" else "#f6f6f6"
-            bubbles.append(
-                f'<div style="border:1px solid #eee; background:{css_bg}; '
-                f'border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; line-height:1.45;">'
-                f'{_html.escape(m.get("text",""))}'
-                f'</div>'
-            )
+    for m in st.session_state.chat:
+        if m["role"] == "user":
+            content = _html.escape(m.get("text","")).replace("\n","<br>")
+            css_bg = "chat-user"
+        else:
+            # Render assistant Markdown to HTML
+            content = md_to_html(m.get("text",""))
+            css_bg = "chat-assistant"
+        bubbles.append(f'<div class="chat-bubble {css_bg}">{content}</div>')
+
 
     chat_html = f"""
     <div id="chatbox" style="
