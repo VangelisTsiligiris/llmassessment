@@ -58,27 +58,60 @@ st.set_page_config(
 # ---------- CSS (layout + sticky prompt) ----------
 st.markdown("""
 <style>
-.block-container {padding-top: 1rem; padding-bottom: 1rem;}
+:root {
+  --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+}
+
+/* Whole app font */
+html, body, [data-testid="stAppViewContainer"] * {
+  font-family: var(--ui-font) !important;
+}
+
+/* Header chips (keep your styles if you already have them) */
 .header-bar {display:flex; gap:.75rem; flex-wrap:wrap; font-size:.95rem; color:#444; margin-bottom:.25rem;}
 .status-chip{background:#f5f7fb;border:1px solid #e6e9f2;border-radius:999px;padding:.15rem .6rem}
 .small-muted{color:#7a7f8a}
 
-/* Assistant chat window — no fixed min-height; modest max-height only */
+/* Chat box */
 .chat-box {
-  max-height: 48vh; overflow-y: auto;
+  height: 420px; overflow-y:auto;
   border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem;
 }
-.chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee; line-height:1.45}
-.chat-user {background:#eef7ff;}
-.chat-assistant {background:#f6f6f6;}
-.prompt-row {border:1px solid #e6e9f2; background:#fafafa; border-radius:10px; padding:.6rem .6rem;}
+.chat-empty{
+  border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090;
+  padding:.6rem .8rem; border-radius:10px;
+}
 
-/* Quill editor — let it size naturally, scroll if tall */
-.ql-container.ql-snow {max-height: 60vh !important; min-height: 260px; overflow-y:auto; border:1px solid #dcdfe6; border-top:none; border-radius:0 0 10px 10px;}
-.ql-toolbar.ql-snow {border:1px solid #dcdfe6; border-bottom:none; border-radius:10px 10px 0 0;}
-.stQuill > div {border:none;}
+/* Bubbles */
+.chat-bubble {
+  border-radius:12px; padding:.7rem .9rem; margin:.45rem .2rem;
+  border:1px solid #eee; line-height:1.55; font-size:0.95rem;
+}
+.chat-user      { background:#eef7ff; }
+.chat-assistant { background:#f6f6f6; }
+
+/* Improve Markdown readability inside bubbles */
+.chat-bubble p     { margin:.35rem 0; }
+.chat-bubble ul,
+.chat-bubble ol    { margin:.35rem 0 .35rem 1.25rem; }
+.chat-bubble h1,
+.chat-bubble h2,
+.chat-bubble h3    { margin:.45rem 0 .25rem; line-height:1.25; }
+.chat-bubble table { border-collapse:collapse; width:100%; margin:.35rem 0; }
+.chat-bubble table th,
+.chat-bubble table td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
+.chat-bubble a     { color:#2563eb; text-decoration:none; }
+.chat-bubble a:hover { text-decoration:underline; }
+
+/* Inline code & code blocks */
+.chat-bubble code  { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
+.chat-bubble pre   {
+  background:#111827; color:#f9fafb; padding:.7rem .9rem;
+  border-radius:10px; overflow:auto; font-size:.9rem;
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ---------- Pilot gate with User ID ----------
