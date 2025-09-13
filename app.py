@@ -58,35 +58,27 @@ st.set_page_config(
 st.markdown("""
 <style>
 .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-
-/* Header chips */
-.header-bar {display:flex; gap:.75rem; flex-wrap:wrap; font-size:.95rem; color:#444;}
+.header-bar {display:flex; gap:.75rem; flex-wrap:wrap; font-size:.95rem; color:#444; margin-bottom:.25rem;}
 .status-chip{background:#f5f7fb;border:1px solid #e6e9f2;border-radius:999px;padding:.15rem .6rem}
 .small-muted{color:#7a7f8a}
 
-/* Two main columns */
-.left-col, .right-col {display:flex; flex-direction:column; height:75vh;}
-
-/* Assistant pane */
-.chat-scroll {
-  flex:1; min-height:0; overflow-y:auto;
-  padding:.5rem; border:1px solid #eee; border-radius:10px; background:#fff;
+/* Assistant chat window — no fixed min-height; modest max-height only */
+.chat-box {
+  max-height: 48vh; overflow-y: auto;
+  border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem;
 }
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee; line-height:1.45}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
-.chat-form {position:sticky; bottom:0; background:#fafafa; padding:.6rem; border-top:1px solid #e5e5e5;}
+.prompt-row {border:1px solid #e6e9f2; background:#fafafa; border-radius:10px; padding:.6rem .6rem;}
 
-/* Draft editor */
-.editor-wrapper{
-  flex:1; min-height:0; overflow:hidden;
-  border:1px solid #eee; border-radius:10px; background:#fff;
-}
-.editor-inner{height:500px; overflow:auto; padding:.25rem .5rem 0 .5rem;}
-.ql-container.ql-snow {border:none;}
-.ql-toolbar.ql-snow {border:none; border-bottom:1px solid #ddd;}
+/* Quill editor — let it size naturally, scroll if tall */
+.ql-container.ql-snow {max-height: 60vh !important; min-height: 260px; overflow-y:auto; border:1px solid #dcdfe6; border-top:none; border-radius:0 0 10px 10px;}
+.ql-toolbar.ql-snow {border:1px solid #dcdfe6; border-bottom:none; border-radius:10px 10px 0 0;}
+.stQuill > div {border:none;}
 </style>
 """, unsafe_allow_html=True)
+
 
 # ---------- Pilot gate with User ID ----------
 def _gen_id(n=6): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
