@@ -58,35 +58,29 @@ st.set_page_config(
 # ---------- Light CSS polish ----------
 st.markdown("""
 <style>
-/* Compact page padding */
 .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-
-/* Ensure Streamlit top controls (Share, ⋯) always sit above everything */
 .stApp header, [data-testid="stToolbar"], [data-testid="stHeaderActionButtons"] {
   z-index: 1000 !important; position: relative;
 }
-
-/* Header bar styling */
 .header-bar {display:flex; align-items:center; gap:.75rem; padding:.6rem 1rem;
   border:1px solid #e6e6e6; border-radius:12px; background:#fafafa;}
 .status-chip {display:inline-block; padding:.15rem .5rem; border-radius:999px;
   font-size:.85rem; border:1px solid #ddd; background:white}
 .small-muted {color:#666; font-size:.9rem}
 
-/* Quill: keep toolbar visible, never sit above Streamlit header */
+/* Quill */
 .ql-toolbar.ql-snow { position: sticky; top: 0; z-index: 10; background:#fff; border-radius:10px 10px 0 0; }
 .ql-container.ql-snow { min-height: 380px; border-radius:0 0 10px 10px; }
 
-/* Chat bubbles */
+/* Chat */
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.25rem 0; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
 
-/* Action buttons */
+/* Buttons */
 .toolbar {display:flex; gap:.5rem; flex-wrap:wrap;}
 .toolbar .stButton>button {height:2.2rem}
 
-/* Prevent the bottom chat input from overlapping content on small screens */
 [data-testid="stBottomBlockContainer"] { padding-bottom: .75rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -126,9 +120,9 @@ if APP_PASSCODE and not st.session_state["__auth_ok"]:
 
 
 # ---------- Environment config ----------
-SPREADSHEET_KEY   = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
+SPREADSHEET_KEY    = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
 ASSIGNMENT_DEFAULT = os.getenv("ASSIGNMENT_ID", "GENERIC")
-SIM_THRESHOLD     = float(os.getenv("SIM_THRESHOLD", "0.85"))
+SIM_THRESHOLD      = float(os.getenv("SIM_THRESHOLD", "0.85"))
 
 
 # ---------- Helpers ----------
@@ -142,14 +136,49 @@ def sha256(s: str) -> str:
 def segment_paragraphs(text: str):
     if not text:
         return []
-    parts = [p.strip() for p in text.split("\n") if p.strip()]
-    return parts
+    return [p.strip() for p in text.split("\n") if p.strip()]
 
 def word_count(t: str) -> int:
     return len((t or "").split())
 
 def char_count(t: str) -> int:
     return len(t or "")
+
+# Make streamlit-quill calls robust across versions
+def render_quill_html(key: str, initial_html: str) -> str:
+    """
+    Return HTML string from the Quill editor, regardless of streamlit-quill version.
+    Tries html=True first (newer versions), then falls back.
+    """
+    # Try new API (returns str or dict with 'html')
+    try:
+        out = st_quill(value=initial_html, placeholder="Write here…", html=True, key=key)
+        if isinstance(out, dict) and "html" in out and out["html"]:
+            return out["html"]
+        if isinstance(out, str) and out:
+            return out
+    except TypeError:
+        # Older versions: no 'html' kwarg
+        try:
+            out = st_quill(value=initial_html, placeholder="Write here…", key=key)
+        except TypeError:
+            # Very old: positional only
+            out = st_quill(initial_html)
+
+    # Normalise older return types (delta dict)
+    if isinstance(out, dict):
+        if "html" in out and out["html"]:
+            return out["html"]
+        delta = out.get("delta") or out.get("ops") or {}
+        ops = delta.get("ops") if isinstance(delta, dict) else delta
+        try:
+            text = "".join(op.get("insert", "") for op in ops) if isinstance(ops, list) else ""
+        except Exception:
+            text = ""
+        return "<p>" + text.replace("\n", "</p><p>") + "</p>" if text else (initial_html or "")
+    if isinstance(out, str):
+        return out
+    return initial_html or ""
 
 
 # ---------- Secrets ----------
@@ -392,13 +421,9 @@ with left:
 
 with right:
     st.subheader("📝 Draft")
-    st.session_state.draft_html = st_quill(
-        value=st.session_state.draft_html,
-        placeholder="Write here…",
-        html=True,
-        key="draft_editor",
-        height=380,
-    )
+    # Robust editor (handles all streamlit-quill versions)
+    st.session_state.draft_html = render_quill_html("draft_editor", st.session_state.draft_html)
+
     # Live KPIs
     plain = html_to_text(st.session_state.draft_html)
     k1, k2, k3 = st.columns(3)
