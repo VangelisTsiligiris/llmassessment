@@ -60,7 +60,7 @@ if APP_PASSCODE:
         if st.button("Enter"):
             if code == APP_PASSCODE:
                 st.session_state["__auth_ok"] = True
-                st.experimental_rerun()
+                st.rerun()   # <-- fixed
             else:
                 st.error("Wrong passcode.")
         st.stop()
