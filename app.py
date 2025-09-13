@@ -38,7 +38,7 @@ except Exception:
         from difflib import SequenceMatcher
         SIM_BACKEND = "difflib"
 
-# For HTML→text (Quill content)
+# HTML → text for Quill content
 try:
     from bs4 import BeautifulSoup
     def html_to_text(html: str) -> str:
@@ -47,28 +47,52 @@ except Exception:
     def html_to_text(html: str) -> str:
         return (html or "").replace("<br>", "\n").replace("<br/>", "\n")
 
-# ---------- App config ----------
-st.set_page_config(page_title="LLM Coursework Helper", layout="wide")
+
+# ---------- Page config ----------
+st.set_page_config(
+    page_title="LLM Coursework Helper",
+    layout="wide",
+    menu_items={"Get help": None, "Report a bug": None, "About": None},
+)
 
 # ---------- Light CSS polish ----------
 st.markdown("""
 <style>
 /* Compact page padding */
 .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-/* Header bar */
-.header-bar {display:flex; align-items:center; gap:1rem; padding:.6rem 1rem; border:1px solid #e6e6e6; border-radius:12px; background:#fafafa;}
-.status-chip {display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.85rem; border:1px solid #ddd; background:white}
+
+/* Ensure Streamlit top controls (Share, ⋯) always sit above everything */
+.stApp header, [data-testid="stToolbar"], [data-testid="stHeaderActionButtons"] {
+  z-index: 1000 !important; position: relative;
+}
+
+/* Header bar styling */
+.header-bar {display:flex; align-items:center; gap:.75rem; padding:.6rem 1rem;
+  border:1px solid #e6e6e6; border-radius:12px; background:#fafafa;}
+.status-chip {display:inline-block; padding:.15rem .5rem; border-radius:999px;
+  font-size:.85rem; border:1px solid #ddd; background:white}
 .small-muted {color:#666; font-size:.9rem}
+
+/* Quill: keep toolbar visible, never sit above Streamlit header */
+.ql-toolbar.ql-snow { position: sticky; top: 0; z-index: 10; background:#fff; border-radius:10px 10px 0 0; }
+.ql-container.ql-snow { min-height: 380px; border-radius:0 0 10px 10px; }
+
+/* Chat bubbles */
 .chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.25rem 0; border:1px solid #eee;}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
+
+/* Action buttons */
 .toolbar {display:flex; gap:.5rem; flex-wrap:wrap;}
-.toolbar button, .toolbar .stButton>button {height:2.2rem}
-.kpi {border:1px solid #eee; border-radius:10px; padding:.6rem .8rem; background:#fff}
+.toolbar .stButton>button {height:2.2rem}
+
+/* Prevent the bottom chat input from overlapping content on small screens */
+[data-testid="stBottomBlockContainer"] { padding-bottom: .75rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Simple pilot gate with User ID entry ----------
+
+# ---------- Pilot gate with User ID ----------
 def _gen_id(n=6):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
 
@@ -100,10 +124,12 @@ if APP_PASSCODE and not st.session_state["__auth_ok"]:
             st.error("Wrong passcode.")
     st.stop()
 
+
 # ---------- Environment config ----------
-SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
+SPREADSHEET_KEY   = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
 ASSIGNMENT_DEFAULT = os.getenv("ASSIGNMENT_ID", "GENERIC")
-SIM_THRESHOLD = float(os.getenv("SIM_THRESHOLD", "0.85"))
+SIM_THRESHOLD     = float(os.getenv("SIM_THRESHOLD", "0.85"))
+
 
 # ---------- Helpers ----------
 def excerpt(text, n=300):
@@ -125,6 +151,7 @@ def word_count(t: str) -> int:
 def char_count(t: str) -> int:
     return len(t or "")
 
+
 # ---------- Secrets ----------
 def load_secrets():
     google_api = st.secrets.get("google_api", {})
@@ -139,6 +166,7 @@ def load_secrets():
     return gemini_key, sa_info
 
 GEMINI_KEY, SA_INFO = load_secrets()
+
 
 # ---------- Clients ----------
 if genai is None or not GEMINI_KEY:
@@ -181,6 +209,7 @@ def append_row_safe(ws, row):
     except Exception as e:
         st.warning(f"Append failed: {e}")
 
+
 # ---------- Session ----------
 if not st.session_state.get("user_id"):
     st.session_state["user_id"] = _gen_id()
@@ -196,6 +225,7 @@ if "report" not in st.session_state:
     st.session_state.report = None
 if "last_saved_at" not in st.session_state:
     st.session_state.last_saved_at = None
+
 
 # ---------- Core ----------
 def ask_llm(prompt_text: str):
@@ -299,6 +329,7 @@ def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
     buf.seek(0)
     return buf.read()
 
+
 # ---------- Header bar ----------
 with st.container():
     st.markdown(
@@ -314,7 +345,7 @@ with st.container():
     )
 
 # ---------- Top toolbar ----------
-tcol1, tcol2, tcol3, tcol4 = st.columns([1.2, 1, 1, 1])
+tcol1, tcol2, tcol3, tcol4 = st.columns([1.2, 0.9, 1.1, 0.8])
 with tcol1:
     st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
 with tcol2:
@@ -327,7 +358,6 @@ with tcol2:
         else:
             st.warning("No saved draft found.")
 with tcol3:
-    # quick import
     up = st.file_uploader("Import text/DOCX", type=["txt","docx"], label_visibility="collapsed")
     if up is not None:
         as_text = ""
@@ -356,7 +386,6 @@ left, right = st.columns([0.55, 0.45], gap="large")
 
 with left:
     st.subheader("💬 Assistant")
-    # Chat history
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
         st.markdown(f'<div class="chat-bubble {css}">{m["text"]}</div>', unsafe_allow_html=True)
@@ -368,6 +397,7 @@ with right:
         placeholder="Write here…",
         html=True,
         key="draft_editor",
+        height=380,
     )
     # Live KPIs
     plain = html_to_text(st.session_state.draft_html)
