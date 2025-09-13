@@ -451,7 +451,6 @@ with t3:
 # ---------- Two-column main: Assistant (left) | Draft (right) ----------
 left, right = st.columns([0.5, 0.5], gap="large")
 
-# LEFT: Assistant
 # LEFT — Assistant
 with left:
     st.subheader("💬 Assistant")
@@ -459,20 +458,19 @@ with left:
     # --- Render chat in a fixed-height, scrollable box with auto-scroll ---
     bubbles = []
     if not st.session_state.chat:
-      bubbles.append(
-        '<div class="chat-empty">No messages yet — ask for ideas, critique, or examples.</div>'
-     )
+        bubbles.append(
+            '<div class="chat-empty">No messages yet — ask for ideas, critique, or examples.</div>'
+        )
     else:
-    for m in st.session_state.chat:
-        if m["role"] == "user":
-            content = _html.escape(m.get("text","")).replace("\n","<br>")
-            css_bg = "chat-user"
-        else:
-            # Render assistant Markdown to HTML
-            content = md_to_html(m.get("text",""))
-            css_bg = "chat-assistant"
-        bubbles.append(f'<div class="chat-bubble {css_bg}">{content}</div>')
-
+        for m in st.session_state.chat:
+            if m["role"] == "user":
+                content = _html.escape(m.get("text", "")).replace("\n", "<br>")
+                css_bg = "chat-user"
+            else:
+                # Render assistant Markdown to HTML
+                content = md_to_html(m.get("text", ""))
+                css_bg = "chat-assistant"
+            bubbles.append(f'<div class="chat-bubble {css_bg}">{content}</div>')
 
     chat_html = f"""
     <div id="chatbox" style="
@@ -491,17 +489,16 @@ with left:
     with st.form("chat_form", clear_on_submit=True):
         c1, c2 = st.columns([4, 1])
         with c1:
-            prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
+            prompt = st.text_input(
+                "Ask…", "", placeholder="Type and press Send", label_visibility="collapsed"
+            )
         with c2:
             send = st.form_submit_button("Send")
 
     # When user clicks Send: show their message immediately, then generate reply on next run
     if send and prompt.strip():
-        # 1) append user message so it renders immediately
         st.session_state.chat.append({"role": "user", "text": prompt})
         log_event("chat_user", prompt, "")
-
-        # 2) mark prompt as pending and rerun (UI will show the prompt now)
         st.session_state.pending_prompt = prompt
         st.rerun()
 
@@ -509,12 +506,13 @@ with left:
     if st.session_state.pending_prompt:
         with st.spinner("Generating response…"):
             p = st.session_state.pending_prompt
-            st.session_state.pending_prompt = None  # clear flag
+            st.session_state.pending_prompt = None
             reply, latency = ask_llm(p)
             st.session_state.chat.append({"role": "assistant", "text": reply})
             st.session_state.llm_outputs.append(reply)
             log_event("chat_llm", p, reply)
         st.rerun()
+
 
 
 # RIGHT: Draft
