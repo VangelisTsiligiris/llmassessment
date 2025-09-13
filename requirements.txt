@@ -6,3 +6,4 @@ gspread
 google-auth
 scikit-learn
 python-docx
+markdown>=3.6
