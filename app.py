@@ -54,37 +54,42 @@ st.set_page_config(
     menu_items={"Get help": None, "Report a bug": None, "About": None},
 )
 
-# ---------- CSS ----------
+# ---------- CSS (layout + sticky prompt) ----------
 st.markdown("""
 <style>
 .block-container {padding-top: 1rem; padding-bottom: 1rem;}
 
-/* Layout columns */
+/* Header chips */
+.header-bar {display:flex; gap:.75rem; flex-wrap:wrap; font-size:.95rem; color:#444;}
+.status-chip{background:#f5f7fb;border:1px solid #e6e9f2;border-radius:999px;padding:.15rem .6rem}
+.small-muted{color:#7a7f8a}
+
+/* Two main columns */
 .left-col, .right-col {display:flex; flex-direction:column; height:75vh;}
 
-/* Assistant */
+/* Assistant pane */
 .chat-scroll {
   flex:1; min-height:0; overflow-y:auto;
   padding:.5rem; border:1px solid #eee; border-radius:10px; background:#fff;
 }
-.chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee;}
+.chat-bubble {border-radius:12px; padding:.6rem .8rem; margin:.4rem .2rem; border:1px solid #eee; line-height:1.45}
 .chat-user {background:#eef7ff;}
 .chat-assistant {background:#f6f6f6;}
-.chat-form {position: sticky; bottom: 0; background: #fafafa; padding:.5rem; border-top:1px solid #ddd;}
+.chat-form {position:sticky; bottom:0; background:#fafafa; padding:.6rem; border-top:1px solid #e5e5e5;}
 
 /* Draft editor */
-.editor-box {
-  flex:1; min-height:0; overflow-y:auto;
-  border:1px solid #eee; border-radius:10px;
+.editor-wrapper{
+  flex:1; min-height:0; overflow:hidden;
+  border:1px solid #eee; border-radius:10px; background:#fff;
 }
-.ql-container.ql-snow {min-height:100%; border:none;}
+.editor-inner{height:500px; overflow:auto; padding:.25rem .5rem 0 .5rem;}
+.ql-container.ql-snow {border:none;}
 .ql-toolbar.ql-snow {border:none; border-bottom:1px solid #ddd;}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------- Pilot gate with User ID ----------
-def _gen_id(n=6):
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
+def _gen_id(n=6): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
 
 APP_PASSCODE = os.getenv("APP_PASSCODE") or st.secrets.get("env", {}).get("APP_PASSCODE")
 st.session_state.setdefault("__auth_ok", False)
@@ -129,15 +134,36 @@ def sha256(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
 def segment_paragraphs(text: str):
-    if not text:
-        return []
+    if not text: return []
     return [p.strip() for p in text.split("\n") if p.strip()]
 
-def word_count(t: str) -> int:
-    return len((t or "").split())
+def word_count(t: str) -> int: return len((t or "").split())
+def char_count(t: str) -> int:  return len(t or "")
 
-def char_count(t: str) -> int:
-    return len(t or "")
+# Robust streamlit-quill wrapper (handles old/new versions)
+def render_quill_html(key: str, initial_html: str) -> str:
+    try:
+        out = st_quill(value=initial_html, placeholder="Write here…", html=True, key=key)
+        if isinstance(out, dict) and out.get("html"): return out["html"]
+        if isinstance(out, str) and out: return out
+    except TypeError:
+        try:
+            out = st_quill(value=initial_html, placeholder="Write here…", key=key)
+        except TypeError:
+            out = st_quill(initial_html)
+
+    if isinstance(out, dict):
+        if out.get("html"): return out["html"]
+        delta = out.get("delta") or out.get("ops") or {}
+        ops = delta.get("ops") if isinstance(delta, dict) else delta
+        try:
+            text = "".join(op.get("insert", "") for op in ops) if isinstance(ops, list) else ""
+        except Exception:
+            text = ""
+        return "<p>" + text.replace("\n", "</p><p>") + "</p>" if text else (initial_html or "")
+    if isinstance(out, str):
+        return out
+    return initial_html or ""
 
 # ---------- Secrets ----------
 def load_secrets():
@@ -156,26 +182,22 @@ GEMINI_KEY, SA_INFO = load_secrets()
 
 # ---------- Clients ----------
 if genai is None or not GEMINI_KEY:
-    st.error("Gemini client not available or missing API key.")
-    st.stop()
+    st.error("Gemini client not available or missing API key."); st.stop()
 try:
     genai.configure(api_key=GEMINI_KEY)
     LLM = genai.GenerativeModel("gemini-1.5-flash")
 except Exception as e:
-    st.error(f"Gemini setup failed: {e}")
-    st.stop()
+    st.error(f"Gemini setup failed: {e}"); st.stop()
 
 if gspread is None or SA_INFO is None or Credentials is None:
-    st.error("Google Sheets client not available.")
-    st.stop()
+    st.error("Google Sheets client not available."); st.stop()
 try:
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(SA_INFO, scopes=scopes)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SPREADSHEET_KEY)
 except Exception as e:
-    st.error(f"Google Sheets access failed: {e}")
-    st.stop()
+    st.error(f"Google Sheets access failed: {e}"); st.stop()
 
 def _get_or_create_ws(title, headers):
     try:
@@ -308,24 +330,29 @@ def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
     if not DOCX_OK:
         raise RuntimeError("python-docx not installed")
     final_text = html_to_text(draft_html)
+
     d = docx.Document()
     d.add_heading("Coursework Evidence Pack", 0)
     d.add_paragraph(f"User ID: {user_id}")
     d.add_paragraph(f"Assignment ID: {assignment_id}")
     d.add_paragraph(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     d.add_heading("Chat with LLM", level=1)
     for m in chat:
         role = "Student" if m["role"] == "user" else "LLM"
         d.add_paragraph(f"{role}: {m['text']}")
+
     d.add_heading("Final Draft (plain text extract)", level=1)
     for para in final_text.split("\n"):
         d.add_paragraph(para)
+
     d.add_heading("Similarity Report", level=1)
     d.add_paragraph(f"Backend: {report.get('backend','-')}")
     d.add_paragraph(f"Mean similarity: {report.get('mean',0.0)}")
     d.add_paragraph(f"High-sim share: {report.get('high_share',0.0)*100:.1f}%")
     for r in report.get("rows", []):
         d.add_paragraph(f"- Cosine: {r['cosine']} | Final: {r['final_seg']} | LLM: {r['nearest_llm']}")
+
     buf = io.BytesIO()
     d.save(buf)
     buf.seek(0)
@@ -336,7 +363,6 @@ with st.container():
     st.markdown(
         f"""
         <div class="header-bar">
-          <div><strong>LLM Coursework Helper</strong></div>
           <div class="status-chip">User: {st.session_state.user_id}</div>
           <div class="status-chip">Assignment: {st.session_state.assignment_id}</div>
           <div class="status-chip">Similarity: {SIM_BACKEND}</div>
@@ -345,22 +371,60 @@ with st.container():
         """, unsafe_allow_html=True
     )
 
+# ---------- Top toolbar ----------
+t1, t2, t3, t4 = st.columns([1.2, 0.9, 1.1, 0.8])
+with t1:
+    st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
+with t2:
+    if st.button("🔄 Load last draft"):
+        loaded_html = load_progress(st.session_state.user_id, st.session_state.assignment_id)
+        if loaded_html:
+            st.session_state.draft_html = loaded_html
+            st.success("Loaded last saved draft.")
+            st.rerun()
+        else:
+            st.warning("No saved draft found.")
+with t3:
+    up = st.file_uploader("Import text/DOCX", type=["txt","docx"], label_visibility="collapsed")
+    if up is not None:
+        as_text = ""
+        if up.type == "text/plain" or up.name.lower().endswith(".txt"):
+            as_text = up.read().decode("utf-8", errors="ignore")
+        elif up.name.lower().endswith(".docx") and DOCX_OK:
+            try:
+                d = docx.Document(up)
+                as_text = "\n".join([p.text for p in d.paragraphs])
+            except Exception as e:
+                st.error(f"Failed to read DOCX: {e}")
+        if as_text:
+            st.session_state.draft_html = "<p>" + as_text.replace("\n", "</p><p>") + "</p>"
+            st.success("Imported into editor.")
+            st.rerun()
+with t4:
+    if st.button("🧹 Clear chat"):
+        st.session_state.chat = []
+        st.session_state.llm_outputs = []
+        st.toast("Chat cleared")
+
 st.divider()
 
-# ---------- Two-column main ----------
+# ---------- Two-column main: Assistant (left) | Draft (right) ----------
 left, right = st.columns([0.5, 0.5], gap="large")
 
+# LEFT: Assistant
 with left:
     st.subheader("💬 Assistant")
     st.markdown('<div class="left-col">', unsafe_allow_html=True)
+
     # Scrollable chat
     chat_html = ['<div class="chat-scroll">']
     for m in st.session_state.chat:
         css = "chat-user" if m["role"] == "user" else "chat-assistant"
-        chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"])}</div>')
+        chat_html.append(f'<div class="chat-bubble {css}">{_html.escape(m["text"] or "")}</div>')
     chat_html.append("</div>")
     st.markdown("".join(chat_html), unsafe_allow_html=True)
-    # Sticky prompt form
+
+    # Sticky prompt at bottom
     st.markdown('<div class="chat-form">', unsafe_allow_html=True)
     with st.form("chat_form", clear_on_submit=True):
         c1, c2 = st.columns([4,1])
@@ -370,6 +434,7 @@ with left:
             send = st.form_submit_button("Send")
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
     if send and prompt.strip():
         st.session_state.chat.append({"role": "user", "text": prompt})
         reply, latency = ask_llm(prompt)
@@ -379,22 +444,27 @@ with left:
         log_event("chat_llm", prompt, reply)
         st.rerun()
 
+# RIGHT: Draft
 with right:
     st.subheader("📝 Draft")
     st.markdown('<div class="right-col">', unsafe_allow_html=True)
-    # Draft editor
-    st.session_state.draft_html = st_quill(
-        value=st.session_state.draft_html,
-        placeholder="Write here…",
-        key="editor",
-        height=500,
-    )
+
+    # Editor (robust wrapper; avoids TypeError)
+    st.markdown('<div class="editor-wrapper"><div class="editor-inner">', unsafe_allow_html=True)
+    st.session_state.draft_html = render_quill_html(key="editor", initial_html=st.session_state.draft_html)
+    st.markdown('</div></div>', unsafe_allow_html=True)
+
+    # KPIs
     plain = html_to_text(st.session_state.draft_html)
     k1, k2, k3 = st.columns(3)
     k1.metric("Words", word_count(plain))
     k2.metric("Characters", char_count(plain))
     k3.metric("LLM Responses", len(st.session_state.llm_outputs))
+
+    # Auto-save if changed
     maybe_autosave(st.session_state.draft_html, plain)
+
+    # Actions
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("💾 Save draft"):
@@ -417,4 +487,5 @@ with right:
                 log_event("evidence_export", "", "docx")
             except Exception as e:
                 st.error(f"Export failed: {e}")
+
     st.markdown('</div>', unsafe_allow_html=True)
