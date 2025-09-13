@@ -158,6 +158,29 @@ def render_quill_html(key: str, initial_html: str) -> str:
     if isinstance(out, str):
         return out
     return initial_html or ""
+# --- Markdown rendering (assistant messages) ---
+try:
+    import markdown as _md
+except Exception:
+    _md = None
+
+def md_to_html(text: str) -> str:
+    """Render Markdown to HTML (fallback: simple newline + bold)."""
+    if not text:
+        return ""
+    if _md:
+        try:
+            return _md.markdown(
+                text,
+                extensions=["fenced_code", "tables", "sane_lists", "toc", "codehilite"]
+            )
+        except Exception:
+            pass
+    # Fallback: escape + simple bold + line breaks
+    import re, html as _h
+    t = _h.escape(text)
+    t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+    return t.replace("\n", "<br>")
 
 # ---------- Secrets ----------
 def load_secrets():
