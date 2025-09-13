@@ -364,41 +364,31 @@ with st.container():
     )
 
 # ---------- Top toolbar ----------
-t1, t2, t3, t4 = st.columns([1.2, 0.9, 1.1, 0.8])
+# ---------- Top toolbar (no upload) ----------
+t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
+
 with t1:
-    st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
+    st.session_state.assignment_id = st.text_input(
+        "Assignment ID",
+        value=st.session_state.assignment_id
+    )
+
 with t2:
     if st.button("🔄 Load last draft"):
-        loaded_html = load_progress(st.session_state.user_id, st.session_state.assignment_id)
-        if loaded_html:
-            st.session_state.draft_html = loaded_html
+        html = load_progress(st.session_state.user_id, st.session_state.assignment_id)
+        if html:
+            st.session_state.draft_html = html
             st.success("Loaded last saved draft.")
             st.rerun()
         else:
             st.warning("No saved draft found.")
+
 with t3:
-    up = st.file_uploader("Import text/DOCX", type=["txt","docx"], label_visibility="collapsed")
-    if up is not None:
-        as_text = ""
-        if up.type == "text/plain" or up.name.lower().endswith(".txt"):
-            as_text = up.read().decode("utf-8", errors="ignore")
-        elif up.name.lower().endswith(".docx") and DOCX_OK:
-            try:
-                d = docx.Document(up)
-                as_text = "\n".join([p.text for p in d.paragraphs])
-            except Exception as e:
-                st.error(f"Failed to read DOCX: {e}")
-        if as_text:
-            st.session_state.draft_html = "<p>" + as_text.replace("\n", "</p><p>") + "</p>"
-            st.success("Imported into editor.")
-            st.rerun()
-with t4:
     if st.button("🧹 Clear chat"):
         st.session_state.chat = []
         st.session_state.llm_outputs = []
         st.toast("Chat cleared")
 
-st.divider()
 
 # ---------- Two-column main: Assistant (left) | Draft (right) ----------
 left, right = st.columns([0.5, 0.5], gap="large")
