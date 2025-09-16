@@ -2,6 +2,7 @@ import os, io, json, time, datetime, hashlib, random, string, html as _html
 import streamlit as st
 from streamlit_quill import st_quill
 from streamlit.components.v1 import html as st_html
+from streamlit.runtime.secrets import AttrDict  # Import AttrDict for type checking
 import pandas as pd
 
 # ---------- Optional libs ----------
@@ -35,7 +36,6 @@ try:
     _sbert_model = load_sbert_model()
     SIM_BACKEND = "sbert"
 except Exception:
-    # Fallback options can be added here if needed
     pass
 
 # ---------- HTML to Text Helper ----------
@@ -100,15 +100,16 @@ AUTO_SAVE_SECONDS = int(os.getenv("AUTO_SAVE_SECONDS", "60"))
 
 @st.cache_resource
 def get_gspread_client():
-    # FIX 1: Robustly handle secrets that can be dicts or strings
+    # FIX 3: Robustly handle secrets that can be dicts, strings, or AttrDict
     sa_info_obj = os.getenv("GCP_SERVICE_ACCOUNT_JSON") or st.secrets.get("gcp_service_account")
     if not sa_info_obj: st.error("GCP Service Account credentials not found in secrets."); st.stop()
 
     if isinstance(sa_info_obj, str):
         try: sa_info = json.loads(sa_info_obj)
         except json.JSONDecodeError: st.error("Invalid GCP Service Account JSON string."); st.stop()
-    elif isinstance(sa_info_obj, dict):
-        sa_info = sa_info_obj # It's already a dictionary
+    elif isinstance(sa_info_obj, (dict, AttrDict)):
+        # Convert AttrDict to a regular dict for gspread compatibility
+        sa_info = dict(sa_info_obj)
     else:
         st.error(f"Unexpected type for GCP credentials: {type(sa_info_obj)}"); st.stop()
 
@@ -143,7 +144,6 @@ DRAFTS_WS = _get_or_create_ws("drafts", ["user_id", "assignment_id", "draft_html
 if not st.session_state["__auth_ok"]:
     st.title("LLM Coursework Helper Login")
 
-    # FIX 2: Redesigned login for all user types
     @st.cache_data(ttl=60)
     def get_all_student_ids():
         try:
@@ -159,11 +159,11 @@ if not st.session_state["__auth_ok"]:
     if st.button("Login", use_container_width=True):
         input_cleaned = user_input.strip().upper()
         
-        if input_cleaned == (ACADEMIC_PASSCODE or "").upper():
+        if ACADEMIC_PASSCODE and input_cleaned == ACADEMIC_PASSCODE.upper():
             st.session_state.update({"__auth_ok": True, "is_academic": True, "user_id": "Academic"})
             st.success("Logged in as Academic.")
             st.rerun()
-        elif input_cleaned == (APP_PASSCODE or "").upper():
+        elif APP_PASSCODE and input_cleaned == APP_PASSCODE.upper():
             new_id = _gen_id()
             st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": new_id, "show_landing_page": True})
             st.success(f"Welcome! Your new Student ID is **{new_id}**")
@@ -301,7 +301,7 @@ def render_student_view():
         except Exception as e: st.warning(f"Append failed: {e}")
 
     def log_event(event_type: str, prompt: str, response: str):
-        append_row_safe(EVENTS_WS, [datetime.datetime.now().isoformat(), st.session_state.user_id, st.session_state.assignment_id, len(st.session_state.chat), event_type, excerpt(prompt, 500), excerpt(response, 1000)])
+        append_row_safe(EVENTS_WS, [datetime.datetime.now(datetime.timezone.utc).isoformat(), st.session_state.user_id, st.session_state.assignment_id, len(st.session_state.chat), event_type, excerpt(prompt, 500), excerpt(response, 1000)])
     
     def ask_llm(prompt_text: str):
         try: return "".join([ch.text for ch in LLM.generate_content([prompt_text], stream=True) if getattr(ch, "text", None)])
@@ -309,8 +309,8 @@ def render_student_view():
 
     def save_progress(silent=False):
         draft_text = html_to_text(st.session_state.draft_html)
-        append_row_safe(DRAFTS_WS, [st.session_state.user_id, st.session_state.assignment_id, st.session_state.draft_html, draft_text, datetime.datetime.now().isoformat()])
-        st.session_state.update({"last_saved_at": datetime.datetime.now(), "last_saved_html": st.session_state.draft_html})
+        append_row_safe(DRAFTS_WS, [st.session_state.user_id, st.session_state.assignment_id, st.session_state.draft_html, draft_text, datetime.datetime.now(datetime.timezone.utc).isoformat()])
+        st.session_state.update({"last_saved_at": datetime.datetime.now(datetime.timezone.utc), "last_saved_html": st.session_state.draft_html})
         if not silent: st.toast("Draft saved")
 
     def load_progress():
@@ -344,10 +344,10 @@ def render_student_view():
             st.session_state.show_landing_page = False; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True); st.stop()
 
-    st.markdown(f'<div class="header-bar"><div class="status-chip">User ID: {st.session_state.user_id}</div><div class="status-chip">Similarity: {SIM_BACKEND}</div><div class="small-muted">Last saved: {st.session_state.last_saved_at.strftime("%H:%M:%S") if st.session_state.last_saved_at else "—"}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="header-bar"><div class="status-chip">User ID: {st.session_state.user_id}</div><div class="status-chip">Similarity: {SIM_BACKEND}</div><div class="small-muted">Last saved: {st.session_state.last_saved_at.strftime("%H:%M:%S %Z") if st.session_state.last_saved_at else "—"}</div></div>', unsafe_allow_html=True)
     
     t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
-    with t1: st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id, label_visibility="collapsed")
+    with t1: st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id, label_visibility="collapsed", placeholder="Enter Assignment ID")
     with t2:
         if st.button("🔄 Load Last Draft"):
             html = load_progress()
@@ -386,7 +386,7 @@ def render_student_view():
                     st.session_state.report = compute_similarity_report(plain_text, st.session_state.llm_outputs, SIM_THRESHOLD)
                     rep = st.session_state.report
                     st.success(f"Mean: {rep['mean']} | High-sim: {rep['high_share']*100:.1f}%")
-                    log_event("similarity_run", f"mean={rep['mean']}, high_share={rep['high_share']}", "")
+                    log_event("similarity_run", f"mean={rep['mean']}, high-share={rep['high_share']}", "")
                 else: st.warning("Need draft text + at least one LLM response.")
         with c3:
             st.download_button("⬇️ Export Evidence", "Feature coming soon.", disabled=True)
