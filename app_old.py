@@ -55,7 +55,7 @@ st.set_page_config(
     menu_items={"Get help": None, "Report a bug": None, "About": None},
 )
 
-# ---------- CSS (layout + font fixes) ----------
+# ---------- CSS (layout + sticky prompt) ----------
 st.markdown("""
 <style>
 :root {
@@ -67,7 +67,7 @@ html, body, [data-testid="stAppViewContainer"] * {
   font-family: var(--ui-font) !important;
 }
 
-/* Header chips */
+/* Header chips (keep your styles if you already have them) */
 .header-bar {display:flex; gap:.75rem; flex-wrap:wrap; font-size:.95rem; color:#444; margin-bottom:.25rem;}
 .status-chip{background:#f5f7fb;border:1px solid #e6e9f2;border-radius:999px;padding:.15rem .6rem}
 .small-muted{color:#7a7f8a}
@@ -82,53 +82,33 @@ html, body, [data-testid="stAppViewContainer"] * {
   padding:.6rem .8rem; border-radius:10px;
 }
 
-/* Bubbles - with font fix */
+/* Bubbles */
 .chat-bubble {
   border-radius:12px; padding:.7rem .9rem; margin:.45rem .2rem;
   border:1px solid #eee; line-height:1.55; font-size:0.95rem;
-  font-family: var(--ui-font) !important; /* <-- UI IMPROVEMENT: Ensures consistent font */
 }
 .chat-user      { background:#eef7ff; }
 .chat-assistant { background:#f6f6f6; }
 
 /* Improve Markdown readability inside bubbles */
-.chat-bubble p      { margin:.35rem 0; }
+.chat-bubble p     { margin:.35rem 0; }
 .chat-bubble ul,
-.chat-bubble ol     { margin:.35rem 0 .35rem 1.25rem; }
+.chat-bubble ol    { margin:.35rem 0 .35rem 1.25rem; }
 .chat-bubble h1,
 .chat-bubble h2,
-.chat-bubble h3     { margin:.45rem 0 .25rem; line-height:1.25; }
+.chat-bubble h3    { margin:.45rem 0 .25rem; line-height:1.25; }
 .chat-bubble table { border-collapse:collapse; width:100%; margin:.35rem 0; }
 .chat-bubble table th,
 .chat-bubble table td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
-.chat-bubble a      { color:#2563eb; text-decoration:none; }
+.chat-bubble a     { color:#2563eb; text-decoration:none; }
 .chat-bubble a:hover { text-decoration:underline; }
 
 /* Inline code & code blocks */
-.chat-bubble code   { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
-.chat-bubble pre    {
+.chat-bubble code  { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
+.chat-bubble pre   {
   background:#111827; color:#f9fafb; padding:.7rem .9rem;
   border-radius:10px; overflow:auto; font-size:.9rem;
 }
-
-/* Landing Page styles */
-.landing-container {
-    max-width: 800px;
-    margin: 2rem auto;
-    padding: 2rem;
-    background-color: #fcfdff;
-    border: 1px solid #e6e9f2;
-    border-radius: 10px;
-}
-.landing-container h1 {
-    font-size: 2.5rem;
-    color: #111;
-}
-.landing-container .stButton button {
-    height: 3rem;
-    font-size: 1.1rem;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -141,7 +121,6 @@ APP_PASSCODE = os.getenv("APP_PASSCODE") or st.secrets.get("env", {}).get("APP_P
 st.session_state.setdefault("__auth_ok", False)
 st.session_state.setdefault("user_id", None)
 st.session_state.setdefault("pending_prompt", None)
-st.session_state.setdefault("show_landing_page", True) # New state for landing page
 
 if APP_PASSCODE and not st.session_state["__auth_ok"]:
     st.title("Pilot access")
@@ -161,47 +140,14 @@ if APP_PASSCODE and not st.session_state["__auth_ok"]:
                 sid = _gen_id()
             st.session_state["user_id"] = sid.strip().upper()
             st.session_state["__auth_ok"] = True
-            st.session_state["show_landing_page"] = True # Reset landing page view on new login
             st.success(f"Signed in as **{st.session_state['user_id']}**")
             st.rerun()
         else:
             st.error("Wrong passcode.")
     st.stop()
 
-
-# ---------- UI IMPROVEMENT: Landing Page (post-login) ----------
-if st.session_state.get("show_landing_page", False):
-    st.markdown('<div class="landing-container">', unsafe_allow_html=True)
-    st.title("Welcome to the LLM Coursework Helper")
-    st.markdown("""
-    This tool is designed to support you through your coursework writing process.
-    Here’s how it works:
-    """)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("💬 AI Assistant")
-        st.markdown("Use the chat on the left to brainstorm ideas, get feedback on your arguments, ask for explanations, or request examples.")
-        st.subheader("📝 Drafting Space")
-        st.markdown("Use the rich text editor on the right to write and format your assignment draft. Your work is saved automatically.")
-    with c2:
-        st.subheader("🔍 Evidence Trail")
-        st.markdown("Every interaction with the AI is logged, creating a clear record of how you used the tool to develop your own work.")
-        st.subheader("📊 Similarity Check")
-        st.markdown("When you're ready, you can run a report to see how similar your text is to the AI's suggestions, helping ensure your work is original.")
-
-    st.markdown("---")
-
-    if st.button("Get Started", type="primary", use_container_width=True):
-        st.session_state.show_landing_page = False
-        st.rerun()
-
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.stop()
-
-
 # ---------- Environment config ----------
-SPREADSHEET_KEY      = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
+SPREADSHEET_KEY    = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
 ASSIGNMENT_DEFAULT = os.getenv("ASSIGNMENT_ID", "GENERIC")
 SIM_THRESHOLD      = float(os.getenv("SIM_THRESHOLD", "0.85"))
 AUTO_SAVE_SECONDS  = int(os.getenv("AUTO_SAVE_SECONDS", "60"))
@@ -476,6 +422,7 @@ with st.container():
     )
 
 # ---------- Top toolbar ----------
+# ---------- Top toolbar (no upload) ----------
 t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
 
 with t1:
@@ -571,18 +518,24 @@ with left:
 # RIGHT: Draft
 with right:
     st.subheader("📝 Draft")
+    st.markdown('<div class="right-col">', unsafe_allow_html=True)
 
     # Editor (robust wrapper; avoids TypeError)
+    st.markdown('<div class="editor-wrapper"><div class="editor-inner">', unsafe_allow_html=True)
     st.session_state.draft_html = render_quill_html(key="editor", initial_html=st.session_state.draft_html)
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
-    # Convert HTML to plain text once for use in saving and similarity checks
+    # KPIs
     plain = html_to_text(st.session_state.draft_html)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Words", word_count(plain))
+    k2.metric("Characters", char_count(plain))
+    k3.metric("LLM Responses", len(st.session_state.llm_outputs))
 
     # Auto-save if changed
     maybe_autosave(st.session_state.draft_html, plain)
 
     # Actions
-    st.markdown("<br>", unsafe_allow_html=True) # Add some space
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("💾 Save draft"):
@@ -597,17 +550,13 @@ with right:
             else:
                 st.warning("Need draft text + at least one LLM response first.")
     with c3:
-        if st.button("⬇️ Export evidence"):
+        if st.button("⬇️ Export evidence (DOCX)"):
             try:
                 rep = st.session_state.get("report", {"backend": "none", "mean": 0, "high_share": 0, "rows": []})
                 data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.chat, st.session_state.draft_html, rep)
-                st.download_button(
-                    "Download DOCX",
-                    data=data,
-                    file_name=f"evidence_{st.session_state.user_id}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True
-                )
+                st.download_button("Download DOCX", data=data, file_name=f"evidence_{st.session_state.user_id}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
                 log_event("evidence_export", "", "docx")
             except Exception as e:
                 st.error(f"Export failed: {e}")
+
+    st.markdown('</div>', unsafe_allow_html=True)
