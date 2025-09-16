@@ -4,6 +4,7 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 from streamlit_quill import st_quill
 import pandas as pd
+from collections.abc import Mapping
 
 # ======================
 # Optional / external libs
@@ -209,16 +210,37 @@ sh  = get_gspread_client()
 LLM = get_llm_client()
 
 @st.cache_resource
-def _get_or_create_ws(title, headers):
-    try:
-        return sh.worksheet(title)
-    except WorksheetNotFound:
-        ws = sh.add_worksheet(title=title, rows=1, cols=len(headers))
-        ws.append_row(headers, value_input_option="USER_ENTERED")
-        return ws
+def get_gspread_client():
+    # Prefer Streamlit secrets; fall back to env var JSON string
+    sa_info_obj = st.secrets.get("gcp_service_account", None) or os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+    if not sa_info_obj:
+        st.error("GCP Service Account credentials not found in secrets or env.")
+        st.stop()
 
-EVENTS_WS = _get_or_create_ws("events", ["timestamp","user_id","assignment_id","turn_count","event_type","prompt","response"])
-DRAFTS_WS = _get_or_create_ws("drafts", ["user_id","assignment_id","draft_html","draft_text","last_updated"])
+    def _to_plain_dict(o):
+        if hasattr(o, "to_dict"):  # Streamlit AttrDict
+            return {k: _to_plain_dict(v) for k, v in o.to_dict().items()}
+        if isinstance(o, Mapping):  # regular dict / mapping
+            return {k: _to_plain_dict(v) for k, v in o.items()}
+        return o
+
+    # Normalize to a plain dict
+    if isinstance(sa_info_obj, str):
+        try:
+            sa_info = json.loads(sa_info_obj)
+        except json.JSONDecodeError:
+            st.error("Invalid GCP_SERVICE_ACCOUNT_JSON string; must be valid JSON.")
+            st.stop()
+    else:
+        sa_info = _to_plain_dict(sa_info_obj)
+
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
+    gc = gspread.authorize(creds)
+    return gc.open_by_key(SPREADSHEET_KEY)
 
 # ======================
 # Login flow
