@@ -585,7 +585,7 @@ def render_student_view():
         st.rerun()
 
 # ======================
-# Router
+# Rout
 # ======================
 if st.session_state.get("is_academic"):
     render_academic_dashboard()
