@@ -509,59 +509,97 @@ def render_student_view():
     left, right = st.columns([0.5, 0.5], gap="large")
 
     # Left: Assistant
-        # Left: Assistant
-    with left:
-        st.subheader("💬 Assistant")
+    # Left: Assistant
+with left:
+    st.subheader("💬 Assistant")
 
-        # Ensure chat list exists & is never reset accidentally
-        if "chat" not in st.session_state:
-            st.session_state.chat = []
+    # Build bubbles from the FULL history
+    if not st.session_state.get("chat"):
+        bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
+    else:
+        all_bubbles = []
+        for m in st.session_state.chat:
+            css = "chat-user" if m["role"] == "user" else "chat-assistant"
+            content = md_to_html(m.get("text", "")) if m["role"] == "assistant" \
+                      else _html.escape(m.get("text", "")).replace("\n", "<br>")
+            all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
+        bubbles_html = "".join(all_bubbles)
 
-        # Build bubbles from the FULL history
-        if not st.session_state.chat:
-            bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
-        else:
-            all_bubbles = []
-            for m in st.session_state.chat:
-                css = "chat-user" if m["role"] == "user" else "chat-assistant"
-                if m["role"] == "assistant":
-                    content = md_to_html(m.get("text", ""))
-                else:
-                    content = _html.escape(m.get("text", "")).replace("\n", "<br>")
-                all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
-            bubbles_html = "".join(all_bubbles)
+    # If we have a pending prompt, show a typing indicator immediately
+    if st.session_state.get("pending_prompt"):
+        bubbles_html += '<div class="chat-bubble chat-assistant">…thinking</div>'
 
-        # Fixed-height, scrollable, auto-scroll to bottom
-        st_html(
-            f'<div id="chatbox" class="chat-box">{bubbles_html}</div>'
-            f'<script>var b=document.getElementById("chatbox"); if(b) b.scrollTop=b.scrollHeight;</script>',
-            height=540
-        )
+    # Render chat inside an iframe with its own CSS and fixed height
+    st_html(f"""
+    <style>
+      :root {{
+        --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      }}
+      * {{ box-sizing: border-box; font-family: var(--ui-font); }}
+      .chat-frame {{ display:flex; flex-direction:column; height: 560px; }}
+      .chat-scroll {{
+        flex:1 1 auto; overflow-y:auto; padding:.5rem;
+        border:1px solid #dcdfe6; border-radius:10px; background:#fff;
+        scroll-behavior:smooth; overscroll-behavior:contain;
+      }}
+      .chat-empty {{
+        border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090;
+        padding:.6rem .8rem; border-radius:10px; margin:.45rem .2rem;
+      }}
+      .chat-bubble {{
+        border:1px solid #eee; border-radius:12px; padding:.7rem .9rem;
+        margin:.45rem .2rem; line-height:1.55; font-size:.95rem;
+      }}
+      .chat-user      {{ background:#eef7ff; }}
+      .chat-assistant {{ background:#f6f6f6; }}
+      .chat-bubble p {{ margin:.35rem 0; }}
+      .chat-bubble ul, .chat-bubble ol {{ margin:.35rem 0 .35rem 1.25rem; }}
+      .chat-bubble table {{ border-collapse:collapse; width:100%; margin:.35rem 0; }}
+      .chat-bubble th, .chat-bubble td {{ border:1px solid #e5e7eb; padding:.35rem .5rem; }}
+      .chat-bubble code {{ background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }}
+      .chat-bubble pre {{
+        background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px;
+        overflow:auto; font-size:.9rem;
+      }}
+    </style>
 
-        # Prompt form
-        with st.form("chat_form", clear_on_submit=True):
-            c1, c2 = st.columns([4, 1])
-            with c1:
-                prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
-            with c2:
-                send = st.form_submit_button("Send")
+    <div class="chat-frame">
+      <div id="chatbox" class="chat-scroll">
+        {bubbles_html}
+      </div>
+    </div>
 
-        # On send: append USER message, set pending, rerun (so user msg appears immediately)
-        if send and (prompt or "").strip():
-            st.session_state.chat.append({"role": "user", "text": prompt})
-            st.session_state.pending_prompt = prompt
-            st.rerun()
+    <script>
+      const box = document.getElementById('chatbox');
+      if (box) {{ box.scrollTop = box.scrollHeight; }}
+    </script>
+    """, height=580)
 
-        # If we have a pending prompt, generate ASSISTANT reply then log the turn
-        if st.session_state.get("pending_prompt"):
-            with st.spinner("Generating response…"):
-                p = st.session_state.pending_prompt
-                st.session_state.pending_prompt = None
-                reply = ask_llm(p)
-                st.session_state.chat.append({"role": "assistant", "text": reply})
-                st.session_state.llm_outputs.append(reply)
-                log_turn(prompt=p, response=reply)  # single consolidated row per turn
-            st.rerun()
+    # Prompt form (Enter to send; Shift+Enter for newline works in text_input)
+    with st.form("chat_form", clear_on_submit=True):
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
+        with c2:
+            send = st.form_submit_button("Send")
+
+    # On send: append USER message, set pending, rerun (so user msg appears immediately)
+    if send and (prompt or "").strip():
+        st.session_state.chat.append({"role": "user", "text": prompt})
+        st.session_state.pending_prompt = prompt
+        st.rerun()
+
+    # If we have a pending prompt, generate ASSISTANT reply then log the turn
+    if st.session_state.get("pending_prompt"):
+        with st.spinner("Generating response…"):
+            p = st.session_state.pending_prompt
+            st.session_state.pending_prompt = None
+            reply = ask_llm(p)
+            st.session_state.chat.append({"role": "assistant", "text": reply})
+            st.session_state.llm_outputs.append(reply)
+            log_turn(prompt=p, response=reply)
+        st.rerun()
+
 
 
     # Right: Draft (KPIs removed for speed as requested)
