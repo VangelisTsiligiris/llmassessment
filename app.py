@@ -236,10 +236,24 @@ EVENTS_WS = _get_or_create_ws("events", EVENTS_HEADERS)
 DRAFTS_WS = _get_or_create_ws("drafts", DRAFTS_HEADERS)
 
 def append_row_safe(ws, row):
+    """Robust append that works even when the API rejects a bare sheet name."""
     try:
-        ws.append_row(row, value_input_option="USER_ENTERED")
-    except Exception as e:
-        st.warning(f"Append failed: {e}")
+        # Try worksheet-native append first
+        ws.append_rows([row], value_input_option="USER_ENTERED", insert_data_option="INSERT_ROWS")
+        return
+    except Exception:
+        pass
+
+    # Fallback: call the spreadsheet API with an explicit range "'<title>'!A1"
+    try:
+        ws.spreadsheet.values_append(
+            f"'{ws.title}'!A1",
+            params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+            body={"values": [row]},
+        )
+    except Exception as e2:
+        st.warning(f"Append failed: {e2}")
+
 
 # ---------- LLM & logging ----------
 def ask_llm(prompt_text: str):
@@ -496,46 +510,58 @@ def render_student_view():
 
     # Left: Assistant
     with left:
-        st.subheader("💬 Assistant")
-        if not st.session_state.chat:
-            bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
-        else:
-            bubbles = []
-            for m in st.session_state.chat:
-                css = "chat-user" if m["role"] == "user" else "chat-assistant"
-                content = md_to_html(m["text"]) if m["role"] == "assistant" else _html.escape(m["text"]).replace("\n","<br>")
-                bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
-            bubbles_html = "".join(bubbles)
+    st.subheader("💬 Assistant")
 
-        st_html(
-            f'<div id="chatbox" class="chat-box">{bubbles_html}</div>'
-            f'<script>var b=document.getElementById("chatbox"); if(b) b.scrollTop=b.scrollHeight;</script>',
-            height=540
-        )
+    # Ensure chat list exists & is never reset accidentally
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
 
-        # Prompt form
-        with st.form("chat_form", clear_on_submit=True):
-            c1, c2 = st.columns([4, 1])
-            with c1:
-                prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
-            with c2:
-                send = st.form_submit_button("Send")
+    # Build bubbles from the FULL history
+    if not st.session_state.chat:
+        bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
+    else:
+        all_bubbles = []
+        for m in st.session_state.chat:
+            css = "chat-user" if m["role"] == "user" else "chat-assistant"
+            if m["role"] == "assistant":
+                content = md_to_html(m.get("text", ""))
+            else:
+                content = _html.escape(m.get("text", "")).replace("\n", "<br>")
+            all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
+        bubbles_html = "".join(all_bubbles)
 
-        if send and prompt.strip():
-            st.session_state.chat.append({"role": "user", "text": prompt})
-            st.session_state.pending_prompt = prompt
-            st.rerun()
+    # Fixed-height, scrollable, auto-scroll to bottom
+    st_html(
+        f'<div id="chatbox" class="chat-box">{bubbles_html}</div>'
+        f'<script>var b=document.getElementById("chatbox"); if(b) b.scrollTop=b.scrollHeight;</script>',
+        height=540
+    )
 
-        if st.session_state.pending_prompt:
-            with st.spinner("Generating response…"):
-                p = st.session_state.pending_prompt
-                st.session_state.pending_prompt = None
-                reply = ask_llm(p)
-                st.session_state.chat.append({"role": "assistant", "text": reply})
-                st.session_state.llm_outputs.append(reply)
-                # one consolidated log row per turn
-                log_turn(prompt=p, response=reply)
-            st.rerun()
+    # Prompt form
+    with st.form("chat_form", clear_on_submit=True):
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
+        with c2:
+            send = st.form_submit_button("Send")
+
+    # On send: append USER message, set pending, rerun (so user msg appears immediately)
+    if send and (prompt or "").strip():
+        st.session_state.chat.append({"role": "user", "text": prompt})
+        st.session_state.pending_prompt = prompt
+        st.rerun()
+
+    # If we have a pending prompt, generate ASSISTANT reply then log the turn
+    if st.session_state.get("pending_prompt"):
+        with st.spinner("Generating response…"):
+            p = st.session_state.pending_prompt
+            st.session_state.pending_prompt = None
+            reply = ask_llm(p)
+            st.session_state.chat.append({"role": "assistant", "text": reply})
+            st.session_state.llm_outputs.append(reply)
+            log_turn(prompt=p, response=reply)  # single consolidated row per turn
+        st.rerun()
+
 
     # Right: Draft (KPIs removed for speed as requested)
     with right:
