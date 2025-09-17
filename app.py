@@ -27,7 +27,7 @@ try:
 except Exception:
     DOCX_OK = False
 
-# HTML → text
+# ---------- HTML → text ----------
 try:
     from bs4 import BeautifulSoup
     def html_to_text(html: str) -> str:
@@ -36,20 +36,20 @@ except Exception:
     def html_to_text(html: str) -> str:
         return (html or "").replace("<br>", "\n").replace("<br/>", "\n")
 
-# Markdown renderer (assistant messages)
+# ---------- Markdown -> HTML (assistant messages) ----------
 try:
     import markdown as _md
 except Exception:
     _md = None
 
 def md_to_html(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     if _md:
         try:
             return _md.markdown(text, extensions=["fenced_code", "tables", "sane_lists", "codehilite"])
         except Exception:
             pass
-    # Fallback: escape + bold + newlines
     import re, html as _h
     t = _h.escape(text)
     t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
@@ -101,7 +101,7 @@ html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !
 .chat-bubble p { margin:.35rem 0; }
 .chat-bubble ul, .chat-bubble ol { margin:.35rem 0 .35rem 1.25rem; }
 .chat-bubble table { border-collapse:collapse; width:100%; margin:.35rem 0; }
-.chat-bubble table th, .chat-bubble table td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
+.chat-bubble th, .chat-bubble td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
 .chat-bubble a { color:#2563eb; text-decoration:none; } .chat-bubble a:hover { text-decoration:underline; }
 .chat-bubble code { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
 .chat-bubble pre { background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px; overflow:auto; font-size:.9rem; }
@@ -122,7 +122,7 @@ ASSIGNMENT_DEFAULT = os.getenv("ASSIGNMENT_ID", "GENERIC")
 SIM_THRESHOLD      = float(os.getenv("SIM_THRESHOLD", "0.85"))
 AUTO_SAVE_SECONDS  = int(os.getenv("AUTO_SAVE_SECONDS", "60"))
 
-# ---------- Target schemas (only what you want) ----------
+# ---------- Target schemas ----------
 EVENTS_HEADERS = ["timestamp", "user_id", "assignment_id", "turn", "prompt", "response"]
 DRAFTS_HEADERS = ["user_id", "assignment_id", "draft_html", "draft_text", "last_updated"]
 
@@ -150,8 +150,8 @@ def segment_paragraphs(text: str):
     if not text: return []
     return [p.strip() for p in text.split("\n") if p.strip()]
 
-# Robust Quill wrapper
 def render_quill_html(key: str, initial_html: str) -> str:
+    """Robust Quill wrapper supporting old/new streamlit-quill."""
     try:
         out = st_quill(value=initial_html, placeholder="Write your draft here…", html=True, key=key)
         if isinstance(out, dict) and out.get("html"): return out["html"]
@@ -238,13 +238,10 @@ DRAFTS_WS = _get_or_create_ws("drafts", DRAFTS_HEADERS)
 def append_row_safe(ws, row):
     """Robust append that works even when the API rejects a bare sheet name."""
     try:
-        # Try worksheet-native append first
         ws.append_rows([row], value_input_option="USER_ENTERED", insert_data_option="INSERT_ROWS")
         return
     except Exception:
         pass
-
-    # Fallback: call the spreadsheet API with an explicit range "'<title>'!A1"
     try:
         ws.spreadsheet.values_append(
             f"'{ws.title}'!A1",
@@ -253,7 +250,6 @@ def append_row_safe(ws, row):
         )
     except Exception as e2:
         st.warning(f"Append failed: {e2}")
-
 
 # ---------- LLM & logging ----------
 def ask_llm(prompt_text: str):
@@ -292,7 +288,6 @@ def save_progress(silent=False):
     if not silent: st.toast("Draft saved")
 
 def load_progress():
-    # Robust read even if header row is messy (uses expected_headers)
     try:
         recs = DRAFTS_WS.get_all_records(expected_headers=DRAFTS_HEADERS, head=1, default_blank="")
         for r in reversed(recs):
@@ -330,6 +325,8 @@ def compute_similarity_report(final_text, llm_texts, sim_thresh=SIM_THRESHOLD):
             rows.append({"final_seg": excerpt(fseg, 200), "nearest_llm": excerpt(nearest, 200), "cosine": round(s, 3)})
             if s >= sim_thresh: high_tokens += len(fseg.split())
     elif SIM_BACKEND == "tfidf":
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
         vectorizer = TfidfVectorizer().fit(finals + llm_segs)
         F = vectorizer.transform(finals); L = vectorizer.transform(llm_segs)
         sims = cosine_similarity(F, L)
@@ -470,15 +467,17 @@ def render_academic_dashboard():
 
 # ---------- Student view ----------
 def render_student_view():
+    # Landing page — nothing else should render here
     if st.session_state.get("show_landing_page", False):
         st.markdown('<div class="landing-container">', unsafe_allow_html=True)
         st.title("Welcome to the LLM Coursework Helper")
         st.markdown("Use the chat to brainstorm and the rich editor to write. Your work and interactions are logged.")
         st.markdown("---")
         if st.button("Get Started", type="primary", use_container_width=True):
-            st.session_state.show_landing_page = False; st.rerun()
+            st.session_state.show_landing_page = False
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
-        return
+        return  # IMPORTANT: stop rendering chat/editor on landing
 
     # Header
     st.markdown(
@@ -490,7 +489,7 @@ def render_student_view():
         f'</div>', unsafe_allow_html=True
     )
 
-    # Toolbar (no upload; minimal)
+    # Toolbar
     t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
     with t1:
         st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
@@ -499,105 +498,105 @@ def render_student_view():
             html = load_progress()
             if html:
                 st.session_state.draft_html = html
-                st.success("Loaded last saved draft."); st.rerun()
+                st.success("Loaded last saved draft.")
+                st.rerun()
             else:
                 st.warning("No saved draft found.")
     with t3:
         if st.button("🧹 Clear Chat"):
-            st.session_state.chat = []; st.session_state.llm_outputs = []; st.toast("Chat cleared")
+            st.session_state.chat = []
+            st.session_state.llm_outputs = []
+            st.toast("Chat cleared")
 
-   
+    # ---- Two-column layout (Assistant | Draft) ----
+    left, right = st.columns([0.5, 0.5], gap="large")
 
-    # --- Two-column layout (ADD THIS LINE) ---
-left, right = st.columns([0.5, 0.5], gap="large")
+    # Left: Assistant
+    with left:
+        st.subheader("💬 Assistant")
 
-# Left: Assistant
-with left:
-    st.subheader("💬 Assistant")
+        # Build bubbles from the FULL history
+        if not st.session_state.get("chat"):
+            bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
+        else:
+            all_bubbles = []
+            for m in st.session_state.chat:
+                css = "chat-user" if m["role"] == "user" else "chat-assistant"
+                content = md_to_html(m.get("text", "")) if m["role"] == "assistant" \
+                         else _html.escape(m.get("text", "")).replace("\n", "<br>")
+                all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
+            bubbles_html = "".join(all_bubbles)
 
-    # Build bubbles from the FULL history
-    if not st.session_state.get("chat"):
-        bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
-    else:
-        all_bubbles = []
-        for m in st.session_state.chat:
-            css = "chat-user" if m["role"] == "user" else "chat-assistant"
-            content = md_to_html(m.get("text", "")) if m["role"] == "assistant" \
-                      else _html.escape(m.get("text", "")).replace("\n", "<br>")
-            all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
-        bubbles_html = "".join(all_bubbles)
+        # If we have a pending prompt, show a typing indicator immediately
+        if st.session_state.get("pending_prompt"):
+            bubbles_html += '<div class="chat-bubble chat-assistant">…thinking</div>'
 
-    # If we have a pending prompt, show a typing indicator immediately
-    if st.session_state.get("pending_prompt"):
-        bubbles_html += '<div class="chat-bubble chat-assistant">…thinking</div>'
+        # Render chat inside an iframe with its own CSS and fixed height
+        st_html(f"""
+        <style>
+          :root {{ --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif; }}
+          * {{ box-sizing: border-box; font-family: var(--ui-font); }}
+          .chat-frame {{ display:flex; flex-direction:column; height: 560px; }}
+          .chat-scroll {{
+            flex:1 1 auto; overflow-y:auto; padding:.5rem;
+            border:1px solid #dcdfe6; border-radius:10px; background:#fff;
+            scroll-behavior:smooth; overscroll-behavior:contain;
+          }}
+          .chat-empty {{
+            border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090;
+            padding:.6rem .8rem; border-radius:10px; margin:.45rem .2rem;
+          }}
+          .chat-bubble {{
+            border:1px solid #eee; border-radius:12px; padding:.7rem .9rem;
+            margin:.45rem .2rem; line-height:1.55; font-size:.95rem;
+          }}
+          .chat-user      {{ background:#eef7ff; }}
+          .chat-assistant {{ background:#f6f6f6; }}
+          .chat-bubble p {{ margin:.35rem 0; }}
+          .chat-bubble ul, .chat-bubble ol {{ margin:.35rem 0 .35rem 1.25rem; }}
+          .chat-bubble table {{ border-collapse:collapse; width:100%; margin:.35rem 0; }}
+          .chat-bubble th, .chat-bubble td {{ border:1px solid #e5e7eb; padding:.35rem .5rem; }}
+          .chat-bubble code {{ background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }}
+          .chat-bubble pre {{
+            background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px;
+            overflow:auto; font-size:.9rem;
+          }}
+        </style>
 
-    # Render chat inside an iframe with its own CSS and fixed height
-    st_html(f"""
-    <style>
-      :root {{ --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif; }}
-      * {{ box-sizing: border-box; font-family: var(--ui-font); }}
-      .chat-frame {{ display:flex; flex-direction:column; height: 560px; }}
-      .chat-scroll {{
-        flex:1 1 auto; overflow-y:auto; padding:.5rem;
-        border:1px solid #dcdfe6; border-radius:10px; background:#fff;
-        scroll-behavior:smooth; overscroll-behavior:contain;
-      }}
-      .chat-empty {{
-        border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090;
-        padding:.6rem .8rem; border-radius:10px; margin:.45rem .2rem;
-      }}
-      .chat-bubble {{
-        border:1px solid #eee; border-radius:12px; padding:.7rem .9rem;
-        margin:.45rem .2rem; line-height:1.55; font-size:.95rem;
-      }}
-      .chat-user      {{ background:#eef7ff; }}
-      .chat-assistant {{ background:#f6f6f6; }}
-      .chat-bubble p {{ margin:.35rem 0; }}
-      .chat-bubble ul, .chat-bubble ol {{ margin:.35rem 0 .35rem 1.25rem; }}
-      .chat-bubble table {{ border-collapse:collapse; width:100%; margin:.35rem 0; }}
-      .chat-bubble th, .chat-bubble td {{ border:1px solid #e5e7eb; padding:.35rem .5rem; }}
-      .chat-bubble code {{ background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }}
-      .chat-bubble pre {{
-        background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px;
-        overflow:auto; font-size:.9rem;
-      }}
-    </style>
+        <div class="chat-frame">
+          <div id="chatbox" class="chat-scroll">
+            {bubbles_html}
+          </div>
+        </div>
 
-    <div class="chat-frame">
-      <div id="chatbox" class="chat-scroll">
-        {bubbles_html}
-      </div>
-    </div>
+        <script>
+          const box = document.getElementById('chatbox');
+          if (box) {{ box.scrollTop = box.scrollHeight; }}
+        </script>
+        """, height=580)
 
-    <script>
-      const box = document.getElementById('chatbox');
-      if (box) {{ box.scrollTop = box.scrollHeight; }}
-    </script>
-    """, height=580)
+        # Prompt form
+        with st.form("chat_form", clear_on_submit=True):
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
+            with c2:
+                send = st.form_submit_button("Send")
 
-    # Prompt form
-    with st.form("chat_form", clear_on_submit=True):
-        c1, c2 = st.columns([4, 1])
-        with c1:
-            prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
-        with c2:
-            send = st.form_submit_button("Send")
+        if send and (prompt or "").strip():
+            st.session_state.chat.append({"role": "user", "text": prompt})
+            st.session_state.pending_prompt = prompt
+            st.rerun()
 
-    if send and (prompt or "").strip():
-        st.session_state.chat.append({"role": "user", "text": prompt})
-        st.session_state.pending_prompt = prompt
-        st.rerun()
-
-    if st.session_state.get("pending_prompt"):
-        with st.spinner("Generating response…"):
-            p = st.session_state.pending_prompt
-            st.session_state.pending_prompt = None
-            reply = ask_llm(p)
-            st.session_state.chat.append({"role": "assistant", "text": reply})
-            st.session_state.llm_outputs.append(reply)
-            log_turn(prompt=p, response=reply)
-        st.rerun()
-
+        if st.session_state.get("pending_prompt"):
+            with st.spinner("Generating response…"):
+                p = st.session_state.pending_prompt
+                st.session_state.pending_prompt = None
+                reply = ask_llm(p)
+                st.session_state.chat.append({"role": "assistant", "text": reply})
+                st.session_state.llm_outputs.append(reply)
+                log_turn(prompt=p, response=reply)  # single consolidated row per turn
+            st.rerun()
 
     # Right: Draft (KPIs removed for speed as requested)
     with right:
