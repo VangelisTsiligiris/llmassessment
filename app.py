@@ -1,14 +1,10 @@
-# app.py
 import os, io, json, time, datetime, hashlib, random, string, html as _html
 import streamlit as st
-from streamlit.components.v1 import html as st_html
 from streamlit_quill import st_quill
+from streamlit.components.v1 import html as st_html
 import pandas as pd
-from collections.abc import Mapping
 
-# ======================
-# Optional / external libs
-# ======================
+# ---------- Optional libs ----------
 try:
     import gspread
     from gspread.exceptions import WorksheetNotFound
@@ -24,20 +20,12 @@ except Exception:
     genai = None
 
 try:
-    import docx  # python-docx (used by academic export later if you enable it)
+    import docx
     DOCX_OK = True
 except Exception:
     DOCX_OK = False
 
-# Markdown renderer for nicer assistant messages (optional; has safe fallback)
-try:
-    import markdown as _md
-except Exception:
-    _md = None
-
-# ======================
-# Similarity backend
-# ======================
+# ---------- Similarity Backend Setup ----------
 SIM_BACKEND = "none"
 try:
     from sentence_transformers import SentenceTransformer, util as sbert_util
@@ -49,67 +37,40 @@ try:
     _sbert_model = load_sbert_model()
     SIM_BACKEND = "sbert"
 except Exception:
-    # (Fallbacks could be added here if needed)
+    # fallback will be difflib in compute_similarity_report
     pass
 
-# ======================
-# Helpers
-# ======================
+# ---------- HTML to Text Helper ----------
 try:
     from bs4 import BeautifulSoup
+
     def html_to_text(html: str) -> str:
         return BeautifulSoup(html or "", "html.parser").get_text("\n")
 except Exception:
     def html_to_text(html: str) -> str:
         return (html or "").replace("<br>", "\n").replace("<br/>", "\n")
 
-def _gen_id(n=6) -> str:
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
-
-def excerpt(text: str, n=300) -> str:
-    t = text or ""
-    return t if len(t) <= n else t[:n] + " …"
+# ---------- Markdown-lite renderer for assistant bubbles ----------
+try:
+    import markdown as _md
+except Exception:
+    _md = None
 
 def md_to_html(text: str) -> str:
-    """Render Markdown (tables, lists, code). Falls back to simple HTML if
-    'markdown' package isn't available."""
     if not text:
         return ""
     if _md:
         try:
-            return _md.markdown(
-                text,
-                extensions=["fenced_code", "tables", "sane_lists", "codehilite"],
-            )
+            return _md.markdown(text, extensions=["fenced_code", "tables", "sane_lists"])
         except Exception:
             pass
+    # Fallback: escape + **bold** + line breaks
     import re, html as _h
-    t = _h.escape(text or "")
+    t = _h.escape(text)
     t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
     return t.replace("\n", "<br>")
 
-def quill_value_to_html(value, fallback_html=""):
-    """Make streamlit-quill return consistent HTML across versions."""
-    # Newer versions can return dict with 'html'
-    if isinstance(value, dict):
-        if value.get("html"):
-            return value["html"]
-        # Try to reconstruct text from delta if no html available
-        delta = value.get("delta") or value.get("ops") or {}
-        ops = delta.get("ops") if isinstance(delta, dict) else delta
-        try:
-            text = "".join(op.get("insert", "") for op in ops) if isinstance(ops, list) else ""
-        except Exception:
-            text = ""
-        return "<p>" + text.replace("\n", "</p><p>") + "</p>" if text else (fallback_html or "")
-    # Some versions return the HTML string directly
-    if isinstance(value, str):
-        return value
-    return fallback_html or ""
-
-# ======================
-# Page config + CSS
-# ======================
+# ---------- Page Config + CSS ----------
 st.set_page_config(
     page_title="LLM Coursework Helper",
     layout="wide",
@@ -118,39 +79,43 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-:root {
-  --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
-}
+:root { --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif; }
 html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !important; }
 
+/* Header chips */
 .header-bar {display:flex; gap:.75rem; flex-wrap:wrap; font-size:.95rem; color:#444; margin-bottom:.25rem;}
 .status-chip{background:#f5f7fb;border:1px solid #e6e9f2;border-radius:999px;padding:.15rem .6rem}
 .small-muted{color:#7a7f8a}
 
-/* Chat */
+/* Chat box */
 .chat-box { height: 420px; overflow-y:auto; border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem; }
 .chat-empty{ border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090; padding:.6rem .8rem; border-radius:10px; }
+
+/* Bubbles */
 .chat-bubble { border-radius:12px; padding:.7rem .9rem; margin:.45rem .2rem; border:1px solid #eee; line-height:1.55; font-size:0.95rem; }
 .chat-user      { background:#eef7ff; }
 .chat-assistant { background:#f6f6f6; }
+
+/* Markdown readability inside bubbles */
 .chat-bubble p { margin:.35rem 0; }
 .chat-bubble ul, .chat-bubble ol { margin:.35rem 0 .35rem 1.25rem; }
 .chat-bubble table { border-collapse:collapse; width:100%; margin:.35rem 0; }
+.chat-bubble table th, .chat-bubble table td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
 .chat-bubble a { color:#2563eb; text-decoration:none; }
 .chat-bubble a:hover { text-decoration:underline; }
 .chat-bubble code { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
 .chat-bubble pre { background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px; overflow:auto; font-size:.9rem; }
 
-/* Landing card */
+/* Landing */
 .landing-container { max-width: 800px; margin: 2rem auto; padding: 2rem; background-color: #fcfdff; border: 1px solid #e6e9f2; border-radius: 10px; }
-.landing-container h1 { font-size: 2.0rem; color: #111; }
-.landing-container .stButton button { height: 3rem; font-size: 1.1rem; }
+.landing-container h1 { font-size: 2.1rem; color: #111; }
+.landing-container .stButton button { height: 3rem; font-size: 1.05rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ======================
-# Auth / Global state
-# ======================
+# ---------- Globals / Config ----------
+def _gen_id(n=6): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
+
 APP_PASSCODE       = os.getenv("APP_PASSCODE")       or st.secrets.get("env", {}).get("APP_PASSCODE")
 ACADEMIC_PASSCODE  = os.getenv("ACADEMIC_PASSCODE")  or st.secrets.get("env", {}).get("ACADEMIC_PASSCODE")
 SPREADSHEET_KEY    = os.getenv("SPREADSHEET_KEY", "1i9kIMnIJkbpOWsqKtcyuTfz-5BREKPNXqESjtWJiDuQ")
@@ -158,31 +123,54 @@ ASSIGNMENT_DEFAULT = os.getenv("ASSIGNMENT_ID", "GENERIC")
 SIM_THRESHOLD      = float(os.getenv("SIM_THRESHOLD", "0.85"))
 AUTO_SAVE_SECONDS  = int(os.getenv("AUTO_SAVE_SECONDS", "60"))
 
+# ---------- Session ----------
 st.session_state.setdefault("__auth_ok", False)
 st.session_state.setdefault("user_id", None)
 st.session_state.setdefault("is_academic", False)
 st.session_state.setdefault("show_landing_page", True)
+st.session_state.setdefault("assignment_id", ASSIGNMENT_DEFAULT)
+st.session_state.setdefault("chat", [])
+st.session_state.setdefault("llm_outputs", [])
+st.session_state.setdefault("draft_html", "")
+st.session_state.setdefault("report", None)
+st.session_state.setdefault("last_saved_at", None)
+st.session_state.setdefault("last_autosave_at", None)
+st.session_state.setdefault("last_saved_html", "")
+st.session_state.setdefault("pending_prompt", None)
 
-# ======================
-# External clients
-# ======================
+# ---------- Helpers ----------
+def excerpt(text, n=300):
+    t = text or ""
+    return t if len(t) <= n else t[:n] + " …"
+
+def sha256(s: str) -> str:
+    return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
+
+# ---------- Secrets → plain dict (handles AttrDict / dict / JSON str) ----------
+def _to_plain(obj):
+    if hasattr(obj, "to_dict"):
+        return {k: _to_plain(v) for k, v in obj.to_dict().items()}
+    if isinstance(obj, dict):
+        return {k: _to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_plain(v) for v in obj]
+    return obj
+
 @st.cache_resource
 def get_gspread_client():
-    sa_info_obj = os.getenv("GCP_SERVICE_ACCOUNT_JSON") or st.secrets.get("gcp_service_account")
-    if not sa_info_obj:
-        st.error("GCP Service Account credentials not found in secrets.")
-        st.stop()
-    if isinstance(sa_info_obj, str):
+    sa_raw = st.secrets.get("gcp_service_account", None)
+    if sa_raw is None:
+        sa_raw = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+    if sa_raw is None:
+        st.error("GCP Service Account credentials not found in secrets or env."); st.stop()
+
+    if isinstance(sa_raw, str):
         try:
-            sa_info = json.loads(sa_info_obj)
+            sa_info = json.loads(sa_raw)
         except json.JSONDecodeError:
-            st.error("Invalid GCP Service Account JSON string.")
-            st.stop()
-    elif isinstance(sa_info_obj, dict):
-        sa_info = sa_info_obj
+            st.error("GCP_SERVICE_ACCOUNT_JSON must be a valid JSON string."); st.stop()
     else:
-        st.error(f"Unexpected type for GCP credentials: {type(sa_info_obj)}")
-        st.stop()
+        sa_info = _to_plain(sa_raw)
 
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
@@ -192,59 +180,38 @@ def get_gspread_client():
 @st.cache_resource
 def get_llm_client():
     gemini_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("google_api", {}).get("gemini_api_key")
-    if not gemini_key:
-        st.error("Gemini API key not found in secrets.")
-        st.stop()
+    if not gemini_key: st.error("Gemini API key not found in secrets or env."); st.stop()
     genai.configure(api_key=gemini_key)
     return genai.GenerativeModel("gemini-1.5-flash")
 
-# Initialize now (fail fast if misconfigured)
+# Initialize clients and worksheets
 if gspread is None or Credentials is None:
-    st.error("Google Sheets client not available.")
-    st.stop()
+    st.error("Google Sheets libraries are not available."); st.stop()
 if genai is None:
-    st.error("Gemini client library not available.")
-    st.stop()
+    st.error("Gemini client library is not available."); st.stop()
 
 sh  = get_gspread_client()
 LLM = get_llm_client()
 
 @st.cache_resource
-def get_gspread_client():
-    # Prefer Streamlit secrets; fall back to env var JSON string
-    sa_info_obj = st.secrets.get("gcp_service_account", None) or os.getenv("GCP_SERVICE_ACCOUNT_JSON")
-    if not sa_info_obj:
-        st.error("GCP Service Account credentials not found in secrets or env.")
-        st.stop()
+def _get_or_create_ws(title, headers):
+    try:
+        return sh.worksheet(title)
+    except WorksheetNotFound:
+        ws = sh.add_worksheet(title=title, rows=1, cols=len(headers))
+        ws.append_row(headers, value_input_option="USER_ENTERED")
+        return ws
 
-    def _to_plain_dict(o):
-        if hasattr(o, "to_dict"):  # Streamlit AttrDict
-            return {k: _to_plain_dict(v) for k, v in o.to_dict().items()}
-        if isinstance(o, Mapping):  # regular dict / mapping
-            return {k: _to_plain_dict(v) for k, v in o.items()}
-        return o
+EVENTS_WS = _get_or_create_ws("events", ["timestamp","user_id","assignment_id","turn_count","event_type","prompt","response"])
+DRAFTS_WS = _get_or_create_ws("drafts", ["user_id","assignment_id","draft_html","draft_text","last_updated"])
 
-    # Normalize to a plain dict
-    if isinstance(sa_info_obj, str):
-        try:
-            sa_info = json.loads(sa_info_obj)
-        except json.JSONDecodeError:
-            st.error("Invalid GCP_SERVICE_ACCOUNT_JSON string; must be valid JSON.")
-            st.stop()
-    else:
-        sa_info = _to_plain_dict(sa_info_obj)
+def append_row_safe(ws, row):
+    try:
+        ws.append_row(row, value_input_option="USER_ENTERED")
+    except Exception as e:
+        st.warning(f"Append failed: {e}")
 
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
-    gc = gspread.authorize(creds)
-    return gc.open_by_key(SPREADSHEET_KEY)
-
-# ======================
-# Login flow
-# ======================
+# ---------- Login ----------
 if not st.session_state["__auth_ok"]:
     st.title("LLM Coursework Helper Login")
 
@@ -252,44 +219,86 @@ if not st.session_state["__auth_ok"]:
     def get_all_student_ids():
         try:
             records = DRAFTS_WS.get_all_records()
-            if not records:
-                return set()
+            if not records: return set()
             df = pd.DataFrame(records)
             return set(df['user_id'].astype(str).unique())
         except Exception:
             return set()
 
-    user_input = st.text_input(
-        "Enter your ID or a Passcode",
-        placeholder="Student ID, Student Passcode, or Academic Passcode",
-    )
-
+    user_input = st.text_input("Enter your ID or a Passcode", placeholder="Student ID, Student Passcode, or Academic Passcode")
     if st.button("Login", use_container_width=True):
-        input_cleaned = (user_input or "").strip().upper()
-        if input_cleaned == (ACADEMIC_PASSCODE or "").upper():
-            st.session_state.update({"__auth_ok": True, "is_academic": True, "user_id": "Academic"})
-            st.success("Logged in as Academic.")
-            st.rerun()
-        elif input_cleaned == (APP_PASSCODE or "").upper():
+        token = (user_input or "").strip().upper()
+        if token and token == (ACADEMIC_PASSCODE or "").upper():
+            st.session_state.update({"__auth_ok": True, "is_academic": True, "user_id": "ACADEMIC"})
+            st.success("Logged in as Academic."); st.rerun()
+        elif token and token == (APP_PASSCODE or "").upper():
             new_id = _gen_id()
             st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": new_id, "show_landing_page": True})
-            st.success(f"Welcome! Your new Student ID is **{new_id}**")
-            st.info("Copy this ID and use it next time to resume.")
-            st.rerun()
-        elif input_cleaned in get_all_student_ids():
-            st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": input_cleaned, "show_landing_page": False})
-            st.success(f"Welcome back, {input_cleaned}!")
-            st.rerun()
+            st.success(f"Welcome! Your new Student ID is **{new_id}**"); st.info("Copy this ID to resume next time."); st.rerun()
+        elif token in get_all_student_ids():
+            st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": token, "show_landing_page": False})
+            st.success(f"Welcome back, {token}!"); st.rerun()
         else:
-            st.error("Invalid ID or Passcode. Please check and try again.")
+            st.error("Invalid ID or Passcode.")
     st.stop()
 
-# ======================
-# Shared computations
-# ======================
+# ---------- Core utilities ----------
+def log_event(event_type: str, prompt: str, response: str):
+    append_row_safe(EVENTS_WS, [
+        datetime.datetime.now().isoformat(),
+        st.session_state.user_id,
+        st.session_state.assignment_id,
+        len(st.session_state.chat),
+        event_type,
+        excerpt(prompt, 500),
+        excerpt(response, 1000),
+    ])
+
+def ask_llm(prompt_text: str) -> str:
+    out = []
+    try:
+        for ch in LLM.generate_content([prompt_text], stream=True):
+            if getattr(ch, "text", None):
+                out.append(ch.text)
+    except Exception as e:
+        out.append(f"Error: {e}")
+    return "".join(out)
+
+def save_progress(silent=False):
+    draft_text = html_to_text(st.session_state.draft_html)
+    append_row_safe(DRAFTS_WS, [
+        st.session_state.user_id,
+        st.session_state.assignment_id,
+        st.session_state.draft_html,
+        draft_text,
+        datetime.datetime.now().isoformat()
+    ])
+    st.session_state["last_saved_at"] = datetime.datetime.now()
+    st.session_state["last_saved_html"] = st.session_state.draft_html
+    if not silent: st.toast("Draft saved")
+
+def load_progress():
+    try:
+        records = DRAFTS_WS.get_all_records()
+        for r in reversed(records):
+            if str(r.get("user_id","")).strip().upper() == st.session_state.user_id.strip().upper() and \
+               str(r.get("assignment_id","")).strip() == st.session_state.assignment_id.strip():
+                return r.get("draft_html") or ""
+    except Exception:
+        return ""
+    return ""
+
+def maybe_autosave():
+    now = time.time()
+    last = st.session_state.last_autosave_at or 0
+    changed = (st.session_state.draft_html or "") != (st.session_state.last_saved_html or "")
+    if changed and (now - last) >= AUTO_SAVE_SECONDS:
+        save_progress(silent=True)
+        st.session_state.last_autosave_at = now
+
 def compute_similarity_report(final_text, llm_texts, sim_thresh=SIM_THRESHOLD):
     finals   = [p.strip() for p in (final_text or "").split("\n") if p.strip()]
-    llm_segs = [s.strip() for t in llm_texts for s in (t or "").split("\n") if s.strip()]
+    llm_segs = [s.strip() for t in (llm_texts or []) for s in (t or "").split("\n") if s.strip()]
     if not finals or not llm_segs:
         return {"backend": SIM_BACKEND, "mean": 0.0, "high_share": 0.0, "rows": []}
 
@@ -301,18 +310,60 @@ def compute_similarity_report(final_text, llm_texts, sim_thresh=SIM_THRESHOLD):
         El = _sbert_model.encode(llm_segs, convert_to_tensor=True, normalize_embeddings=True)
         sims = sbert_util.cos_sim(Ef, El).cpu().numpy()
         for i, fseg in enumerate(finals):
-            j = int(sims[i].argmax()); s = float(sims[i, j]); nearest = llm_segs[j]
+            j = int(sims[i].argmax())
+            s = float(sims[i, j])
+            nearest = llm_segs[j]
             rows.append({"final_seg": excerpt(fseg, 200), "nearest_llm": excerpt(nearest, 200), "cosine": round(s, 3)})
-            if s >= sim_thresh:
-                high_tokens += len(fseg.split())
+            if s >= sim_thresh: high_tokens += len(fseg.split())
+    else:
+        # lightweight fallback
+        from difflib import SequenceMatcher
+        def cos_like(a, b): return SequenceMatcher(None, a, b).ratio()
+        for fseg in finals:
+            best, nearest = 0.0, ""
+            for l in llm_segs:
+                c = cos_like(fseg, l)
+                if c > best: best, nearest = c, l
+            rows.append({"final_seg": excerpt(fseg, 200), "nearest_llm": excerpt(nearest, 200), "cosine": round(best, 3)})
+            if best >= sim_thresh: high_tokens += len(fseg.split())
 
-    mean_sim   = 0.0 if not rows else round(sum(r["cosine"] for r in rows) / len(rows), 3)
-    high_share = round(high_tokens / max(1, total_tokens), 3)
+    mean_sim  = 0.0 if not rows else round(sum(r["cosine"] for r in rows) / len(rows), 3)
+    high_share= round(high_tokens / max(1, total_tokens), 3)
     return {"backend": SIM_BACKEND, "mean": mean_sim, "high_share": high_share, "rows": rows[:30]}
 
-# ======================
-# Academic dashboard
-# ======================
+def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
+    if not DOCX_OK:
+        raise RuntimeError("python-docx not installed")
+    final_text = html_to_text(draft_html)
+
+    d = docx.Document()
+    d.add_heading("Coursework Evidence Pack", 0)
+    d.add_paragraph(f"User ID: {user_id}")
+    d.add_paragraph(f"Assignment ID: {assignment_id}")
+    d.add_paragraph(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    d.add_heading("Chat with LLM", level=1)
+    for m in chat:
+        role = "Student" if m["role"] == "user" else "LLM"
+        d.add_paragraph(f"{role}: {m['text']}")
+
+    d.add_heading("Final Draft (plain text extract)", level=1)
+    for para in final_text.split("\n"):
+        d.add_paragraph(para)
+
+    d.add_heading("Similarity Report", level=1)
+    d.add_paragraph(f"Backend: {report.get('backend','-')}")
+    d.add_paragraph(f"Mean similarity: {report.get('mean',0.0)}")
+    d.add_paragraph(f"High-sim share: {report.get('high_share',0.0)*100:.1f}%")
+    for r in report.get("rows", []):
+        d.add_paragraph(f"- Cosine: {r['cosine']} | Final: {r['final_seg']} | LLM: {r['nearest_llm']}")
+
+    buf = io.BytesIO()
+    d.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+# ---------- Academic Dashboard ----------
 def render_academic_dashboard():
     st.title("🎓 Academic Dashboard")
 
@@ -330,55 +381,48 @@ def render_academic_dashboard():
 
     if drafts_df.empty and events_df.empty:
         st.warning("No student data has been recorded yet.")
-        st.stop()
+        return
 
     all_student_ids = pd.concat([drafts_df['user_id'], events_df['user_id']]).dropna().unique()
-    all_student_ids = sorted([str(sid) for sid in all_student_ids if str(sid).strip() and sid != "Academic"])
+    all_student_ids = sorted([str(sid) for sid in all_student_ids if str(sid).strip() and sid.upper() != "ACADEMIC"])
 
-    selected_student = st.selectbox(
-        "Select a Student ID to Review",
-        all_student_ids, index=None, placeholder="Search for a student..."
-    )
+    selected_student = st.selectbox("Select a Student ID to Review", all_student_ids, index=None, placeholder="Search for a student...")
     if not selected_student:
-        st.info("Select a student ID to begin.")
-        st.stop()
+        st.info("Please select a student ID to begin.")
+        return
 
     st.header(f"Reviewing: {selected_student}")
-
-    student_drafts = drafts_df[drafts_df['user_id'] == selected_student] if not drafts_df.empty else pd.DataFrame()
-    student_events = events_df[events_df['user_id'] == selected_student] if not events_df.empty else pd.DataFrame()
+    student_drafts = drafts_df[drafts_df['user_id'] == selected_student]
+    student_events = events_df[events_df['user_id'] == selected_student]
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Latest Draft")
         if not student_drafts.empty:
-            latest_draft = student_drafts.sort_values('last_updated', ascending=False).iloc[0]
-            st.markdown(f"**Last Saved:** {latest_draft['last_updated']}")
-            # Use st_html directly (some Streamlit versions don't support container(height=...))
-            st_html(latest_draft['draft_html'], height=380, scrolling=True)
-            st.session_state.latest_draft_text = latest_draft['draft_text']
+            latest = student_drafts.sort_values('last_updated', ascending=False).iloc[0]
+            st.markdown(f"**Last Saved:** {latest['last_updated']}")
+            st_html(f'<div class="chat-box" style="height:380px;">{latest["draft_html"]}</div>', height=410)
+            st.session_state.latest_draft_text = latest['draft_text']
         else:
             st.info("No saved drafts for this student.")
             st.session_state.latest_draft_text = ""
 
     with col2:
         st.subheader("Chat History")
-        chat_history = student_events[student_events['event_type'].str.contains('chat', na=False)].sort_values('timestamp') if not student_events.empty else pd.DataFrame()
+        chat_history = student_events[student_events['event_type'].str.contains('chat', na=False)].sort_values('timestamp')
         bubbles = []
         if not chat_history.empty:
             for _, row in chat_history.iterrows():
                 if row['event_type'] == 'chat_user':
-                    css = 'chat-user'; content = row['prompt']
-                else:
-                    css = 'chat-assistant'; content = row['response']
-                bubbles.append(f'<div class="chat-bubble {css}">{md_to_html(content)}</div>')
+                    bubbles.append(f'<div class="chat-bubble chat-user">{md_to_html(row["prompt"])}</div>')
+                elif row['event_type'] == 'chat_llm':
+                    bubbles.append(f'<div class="chat-bubble chat-assistant">{md_to_html(row["response"])}</div>')
             st_html(f'<div class="chat-box" style="height:425px;">{"".join(bubbles)}</div>', height=450)
         else:
             st.info("No chat history for this student.")
 
     st.subheader("Similarity Analysis")
-    llm_outputs = student_events[student_events['event_type'] == 'chat_llm']['response'].tolist() if not student_events.empty else []
-
+    llm_outputs = student_events[student_events['event_type'] == 'chat_llm']['response'].tolist()
     if st.button("Run Similarity Report on Latest Draft", use_container_width=True):
         draft_text = st.session_state.get('latest_draft_text', '')
         if draft_text and llm_outputs:
@@ -391,126 +435,48 @@ def render_academic_dashboard():
             with st.expander("Show Detailed Report"):
                 st.dataframe(report['rows'], use_container_width=True)
         else:
-            st.warning("Cannot run report. Student needs a saved draft and at least one LLM interaction.")
+            st.warning("Need a saved draft and at least one LLM response.")
 
-# ======================
-# Student view
-# ======================
+# ---------- Student View ----------
 def render_student_view():
-    # Session defaults
-    st.session_state.setdefault("assignment_id", ASSIGNMENT_DEFAULT)
-    st.session_state.setdefault("chat", [])
-    st.session_state.setdefault("llm_outputs", [])
-    st.session_state.setdefault("draft_html", "")
-    st.session_state.setdefault("report", None)
-    st.session_state.setdefault("last_saved_at", None)
-    st.session_state.setdefault("last_autosave_at", None)
-    st.session_state.setdefault("last_saved_html", "")
-    st.session_state.setdefault("pending_prompt", None)
-
-    # Sheet helpers
-    def append_row_safe(ws, row):
-        try:
-            ws.append_row(row, value_input_option="USER_ENTERED")
-        except Exception as e:
-            st.warning(f"Append failed: {e}")
-
-    def log_event(event_type: str, prompt: str, response: str):
-        append_row_safe(
-            EVENTS_WS,
-            [
-                datetime.datetime.now().isoformat(),
-                st.session_state.user_id,
-                st.session_state.assignment_id,
-                len(st.session_state.chat),
-                event_type,
-                excerpt(prompt, 500),
-                excerpt(response, 1000),
-            ],
-        )
-
-    def ask_llm(prompt_text: str) -> str:
-        # Stream and stitch output to keep latency good
-        try:
-            return "".join(
-                ch.text for ch in LLM.generate_content([prompt_text], stream=True)
-                if getattr(ch, "text", None)
-            )
-        except Exception as e:
-            return f"Error: {e}"
-
-    def save_progress(silent=False):
-        draft_text = html_to_text(st.session_state.draft_html)
-        append_row_safe(
-            DRAFTS_WS,
-            [
-                st.session_state.user_id,
-                st.session_state.assignment_id,
-                st.session_state.draft_html,
-                draft_text,
-                datetime.datetime.now().isoformat(),
-            ],
-        )
-        st.session_state.update(
-            {"last_saved_at": datetime.datetime.now(), "last_saved_html": st.session_state.draft_html}
-        )
-        if not silent:
-            st.toast("Draft saved")
-
-    def load_progress():
-        try:
-            records = DRAFTS_WS.get_all_records()
-            for r in reversed(records):
-                if str(r.get("user_id", "")).strip().upper() == st.session_state.user_id.strip().upper():
-                    return r.get("draft_html") or ""
-        except Exception:
-            return ""
-        return ""
-
-    def maybe_autosave():
-        now = time.time()
-        if (
-            (st.session_state.draft_html != st.session_state.last_saved_html)
-            and (now - (st.session_state.last_autosave_at or 0) >= AUTO_SAVE_SECONDS)
-        ):
-            save_progress(silent=True)
-            st.session_state.last_autosave_at = now
-
-    # Optional landing
+    # Landing (first time only)
     if st.session_state.get("show_landing_page", False):
         st.markdown('<div class="landing-container">', unsafe_allow_html=True)
         st.title("Welcome to the LLM Coursework Helper")
-        st.markdown("This tool supports your writing process and records an evidence trail.")
+        st.markdown("Use the AI assistant to brainstorm and the editor to write. Your progress is auto-saved to your institution’s Google Sheet.")
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("💬 Assistant & Draft"); st.markdown("Brainstorm in chat, write in the editor. Autosave is on.")
-            st.subheader("🔍 Evidence"); st.markdown("Your interactions are logged for integrity & reflection.")
+            st.subheader("💬 Assistant & Draft")
+            st.markdown("- Ask for ideas, outlines, or feedback.\n- Keep your own writing voice in the editor.")
+            st.subheader("🔍 Evidence Trail")
+            st.markdown("- All interactions are logged to promote constructive use.")
         with c2:
-            st.subheader("📊 Similarity"); st.markdown("See how close your final text is to the AI’s examples.")
-            st.subheader("✅ Oversight"); st.markdown("Your instructor may review logs/drafts as part of assessment.")
+            st.subheader("📊 Similarity Check")
+            st.markdown("Compare your draft against the assistant outputs to gauge reliance.")
+            st.subheader("✅ Academic Oversight")
+            st.markdown("Your instructor may review your process logs as part of assessment.")
         st.markdown("---")
         if st.button("Get Started", type="primary", use_container_width=True):
             st.session_state.show_landing_page = False
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
-        st.stop()
+        return
 
-    # Header bar
+    # Header chips
     st.markdown(
         f'<div class="header-bar">'
         f'<div class="status-chip">User ID: {st.session_state.user_id}</div>'
-        f'<div class="status-chip">Similarity: {SIM_BACKEND}</div>'
+        f'<div class="status-chip">Assignment: {st.session_state.assignment_id}</div>'
+        f'<div class="status-chip">Similarity backend: {SIM_BACKEND}</div>'
         f'<div class="small-muted">Last saved: {st.session_state.last_saved_at.strftime("%H:%M:%S") if st.session_state.last_saved_at else "—"}</div>'
         f'</div>',
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
-    # Top controls
+    # Toolbar
     t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
     with t1:
-        st.session_state.assignment_id = st.text_input(
-            "Assignment ID", value=st.session_state.assignment_id, label_visibility="collapsed"
-        )
+        st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id, label_visibility="collapsed")
     with t2:
         if st.button("🔄 Load Last Draft"):
             html = load_progress()
@@ -526,90 +492,112 @@ def render_student_view():
             st.session_state.llm_outputs = []
             st.toast("Chat cleared")
 
-    # Layout
+    # Two columns
     left, right = st.columns([0.5, 0.5], gap="large")
 
-    # LEFT — Assistant
+    # LEFT: Assistant
     with left:
         st.subheader("💬 Assistant")
 
-        bubbles = []
         if not st.session_state.chat:
-            bubbles.append('<div class="chat-empty">Ask for ideas, critique, or examples.</div>')
+            bubbles = ['<div class="chat-empty">Ask for ideas, critique, or examples.</div>']
         else:
+            bubbles = []
             for m in st.session_state.chat:
-                css = "chat-user" if m.get("role") == "user" else "chat-assistant"
-                content = md_to_html(m.get("text", "")) if m.get("role") != "user" else _html.escape(m.get("text", "")).replace("\n", "<br>")
+                css = "chat-user" if m["role"] == "user" else "chat-assistant"
+                content = _html.escape(m.get("text","")).replace("\n","<br>") if m["role"]=="user" else md_to_html(m.get("text",""))
                 bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
 
         st_html(
             f'<div id="chatbox" class="chat-box">{"".join(bubbles)}</div>'
-            '<script>const b=document.getElementById("chatbox"); if(b){b.scrollTop=b.scrollHeight;}</script>',
-            height=450,
+            f'<script>var box=document.getElementById("chatbox"); if(box){{box.scrollTop=box.scrollHeight;}}</script>',
+            height=450
         )
 
+        # Prompt form (sticky under chat box)
         with st.form("chat_form", clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
             with c1:
-                prompt = st.text_input("Ask…", placeholder="Type and press Send", label_visibility="collapsed")
+                prompt = st.text_input("Ask…", "", placeholder="Type and press Send", label_visibility="collapsed")
             with c2:
                 send = st.form_submit_button("Send")
 
         if send and (prompt or "").strip():
-            # Show the user's prompt immediately
             st.session_state.chat.append({"role": "user", "text": prompt})
             log_event("chat_user", prompt, "")
             st.session_state.pending_prompt = prompt
             st.rerun()
 
-    # RIGHT — Draft
+        # Generate reply on next run (after UI renders with the user bubble)
+        if st.session_state.pending_prompt:
+            with st.spinner("Generating response…"):
+                p = st.session_state.pending_prompt
+                st.session_state.pending_prompt = None
+                reply = ask_llm(p)
+                st.session_state.chat.append({"role": "assistant", "text": reply})
+                st.session_state.llm_outputs.append(reply)
+                log_event("chat_llm", p, reply)
+            st.rerun()
+
+    # RIGHT: Draft
     with right:
         st.subheader("📝 Draft")
+        st.session_state.draft_html = st_quill(
+            value=st.session_state.draft_html,
+            key="editor",
+            html=True,
+            placeholder="Write your draft here..."
+        )
 
-        # Robust Quill usage across versions
-        try:
-            quill_raw = st_quill(value=st.session_state.draft_html, key="editor", html=True, placeholder="Write your draft here...")
-        except TypeError:
-            # Older versions don’t accept html=True
-            quill_raw = st_quill(value=st.session_state.draft_html, key="editor", placeholder="Write your draft here...")
+        # KPIs
+        plain = html_to_text(st.session_state.draft_html)
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Words", len(plain.split()))
+        k2.metric("Characters", len(plain))
+        k3.metric("LLM Responses", len(st.session_state.llm_outputs))
 
-        st.session_state.draft_html = quill_value_to_html(quill_raw, st.session_state.draft_html)
+        # Auto-save
         maybe_autosave()
 
         st.markdown("<br>", unsafe_allow_html=True)
-
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("💾 Save Draft"):
                 save_progress()
         with c2:
             if st.button("📊 Run Similarity"):
-                plain_text = html_to_text(st.session_state.draft_html)
-                if plain_text.strip() and st.session_state.llm_outputs:
-                    st.session_state.report = compute_similarity_report(plain_text, st.session_state.llm_outputs, SIM_THRESHOLD)
-                    rep = st.session_state.report
-                    st.success(f"Mean: {rep['mean']} | High-sim: {rep['high_share']*100:.1f}%")
-                    log_event("similarity_run", f"mean={rep['mean']}, high_share={rep['high_share']}", "")
+                if plain.strip() and st.session_state.llm_outputs:
+                    report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
+                    st.session_state.report = report
+                    st.success(f"Mean: {report['mean']} | High-sim: {report['high_share']*100:.1f}%")
+                    log_event("similarity_run", f"mean={report['mean']}, high_share={report['high_share']}", "")
                 else:
                     st.warning("Need draft text + at least one LLM response.")
         with c3:
-            st.download_button("⬇️ Export Evidence", "Feature coming soon.", disabled=True)
+            if st.button("⬇️ Export Evidence (DOCX)"):
+                try:
+                    rep = st.session_state.get("report", {"backend": SIM_BACKEND, "mean": 0, "high_share": 0, "rows": []})
+                    data = export_evidence_docx(
+                        st.session_state.user_id,
+                        st.session_state.assignment_id,
+                        st.session_state.chat,
+                        st.session_state.draft_html,
+                        rep
+                    )
+                    st.download_button(
+                        "Download DOCX",
+                        data=data,
+                        file_name=f"evidence_{st.session_state.user_id}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    log_event("evidence_export", "", "docx")
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
 
-    # After UI renders, generate response if needed (so user sees their prompt while waiting)
-    if st.session_state.pending_prompt:
-        with st.spinner("Generating response…"):
-            p = st.session_state.pending_prompt
-            st.session_state.pending_prompt = None
-            reply = ask_llm(p)
-            st.session_state.chat.append({"role": "assistant", "text": reply})
-            st.session_state.llm_outputs.append(reply)
-            log_event("chat_llm", p, reply)
-        st.rerun()
-
-# ======================
-# Rout
-# ======================
-if st.session_state.get("is_academic"):
-    render_academic_dashboard()
-else:
-    render_student_view()
+# ---------- Router ----------
+if __name__ == "__main__":
+    if st.session_state.get("is_academic"):
+        render_academic_dashboard()
+    else:
+        render_student_view()
