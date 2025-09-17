@@ -506,10 +506,12 @@ def render_student_view():
         if st.button("🧹 Clear Chat"):
             st.session_state.chat = []; st.session_state.llm_outputs = []; st.toast("Chat cleared")
 
-    left, right = st.columns([0.5, 0.5], gap="large")
+   
 
-    # Left: Assistant
-    # Left: Assistant
+    # --- Two-column layout (ADD THIS LINE) ---
+left, right = st.columns([0.5, 0.5], gap="large")
+
+# Left: Assistant
 with left:
     st.subheader("💬 Assistant")
 
@@ -532,9 +534,7 @@ with left:
     # Render chat inside an iframe with its own CSS and fixed height
     st_html(f"""
     <style>
-      :root {{
-        --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
-      }}
+      :root {{ --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif; }}
       * {{ box-sizing: border-box; font-family: var(--ui-font); }}
       .chat-frame {{ display:flex; flex-direction:column; height: 560px; }}
       .chat-scroll {{
@@ -575,7 +575,7 @@ with left:
     </script>
     """, height=580)
 
-    # Prompt form (Enter to send; Shift+Enter for newline works in text_input)
+    # Prompt form
     with st.form("chat_form", clear_on_submit=True):
         c1, c2 = st.columns([4, 1])
         with c1:
@@ -583,13 +583,11 @@ with left:
         with c2:
             send = st.form_submit_button("Send")
 
-    # On send: append USER message, set pending, rerun (so user msg appears immediately)
     if send and (prompt or "").strip():
         st.session_state.chat.append({"role": "user", "text": prompt})
         st.session_state.pending_prompt = prompt
         st.rerun()
 
-    # If we have a pending prompt, generate ASSISTANT reply then log the turn
     if st.session_state.get("pending_prompt"):
         with st.spinner("Generating response…"):
             p = st.session_state.pending_prompt
@@ -599,7 +597,6 @@ with left:
             st.session_state.llm_outputs.append(reply)
             log_turn(prompt=p, response=reply)
         st.rerun()
-
 
 
     # Right: Draft (KPIs removed for speed as requested)
