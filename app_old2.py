@@ -1,4 +1,4 @@
-import os, io, json, time, datetime, random, string, html as _html
+import os, io, json, time, datetime, hashlib, random, string, html as _html
 from collections.abc import Mapping
 
 import streamlit as st
@@ -27,7 +27,7 @@ try:
 except Exception:
     DOCX_OK = False
 
-# HTML → text
+# ---------- HTML → text ----------
 try:
     from bs4 import BeautifulSoup
     def html_to_text(html: str) -> str:
@@ -36,23 +36,20 @@ except Exception:
     def html_to_text(html: str) -> str:
         return (html or "").replace("<br>", "\n").replace("<br/>", "\n")
 
-# Markdown renderer (assistant messages)
+# ---------- Markdown -> HTML (assistant messages) ----------
 try:
     import markdown as _md
 except Exception:
     _md = None
 
 def md_to_html(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     if _md:
         try:
-            return _md.markdown(
-                text,
-                extensions=["fenced_code", "tables", "sane_lists", "codehilite"],
-            )
+            return _md.markdown(text, extensions=["fenced_code", "tables", "sane_lists", "codehilite"])
         except Exception:
             pass
-    # Fallback: escape + bold + newlines
     import re, html as _h
     t = _h.escape(text)
     t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
@@ -96,7 +93,7 @@ html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !
 .small-muted{color:#7a7f8a}
 
 /* Chat */
-.chat-box { height: 560px; overflow-y:auto; border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem; }
+.chat-box { height: 520px; overflow-y:auto; border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem; }
 .chat-empty{ border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090; padding:.6rem .8rem; border-radius:10px; }
 .chat-bubble { border-radius:12px; padding:.7rem .9rem; margin:.45rem .2rem; border:1px solid #eee; line-height:1.55; font-size:0.95rem; }
 .chat-user      { background:#eef7ff; }
@@ -104,21 +101,13 @@ html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !
 .chat-bubble p { margin:.35rem 0; }
 .chat-bubble ul, .chat-bubble ol { margin:.35rem 0 .35rem 1.25rem; }
 .chat-bubble table { border-collapse:collapse; width:100%; margin:.35rem 0; }
-.chat-bubble table th, .chat-bubble table td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
+.chat-bubble th, .chat-bubble td { border:1px solid #e5e7eb; padding:.35rem .5rem; }
 .chat-bubble a { color:#2563eb; text-decoration:none; } .chat-bubble a:hover { text-decoration:underline; }
 .chat-bubble code { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
 .chat-bubble pre { background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px; overflow:auto; font-size:.9rem; }
 
-/* Landing cards */
-.hero {max-width: 1000px; margin: 0 auto 1.2rem; padding: 1.2rem 1.4rem; background:#f7faff; border:1px solid #e6ecff; border-radius:12px;}
-.grid {display:grid; grid-template-columns: 1fr 1fr; gap: 1rem;}
-.card {background:#fcfdff; border:1px solid #e6e9f2; border-radius:12px; padding:1rem;}
-.card h3 {margin:.25rem 0 .5rem;}
-
-/* Right editor panel */
-.editor-wrap { border:1px solid #e6e9f2; border-radius:10px; padding:.25rem .5rem; }
-.ql-container.ql-snow {min-height:360px; border:none;}
-.ql-toolbar.ql-snow {border:none; border-bottom:1px solid #e6e9f2;}
+/* Landing card */
+.landing-container { max-width: 820px; margin: 1.5rem auto; padding: 1.5rem; background:#fcfdff; border:1px solid #e6e9f2; border-radius:12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -161,8 +150,8 @@ def segment_paragraphs(text: str):
     if not text: return []
     return [p.strip() for p in text.split("\n") if p.strip()]
 
-# Robust Quill wrapper
 def render_quill_html(key: str, initial_html: str) -> str:
+    """Robust Quill wrapper supporting old/new streamlit-quill."""
     try:
         out = st_quill(value=initial_html, placeholder="Write your draft here…", html=True, key=key)
         if isinstance(out, dict) and out.get("html"): return out["html"]
@@ -247,20 +236,18 @@ EVENTS_WS = _get_or_create_ws("events", EVENTS_HEADERS)
 DRAFTS_WS = _get_or_create_ws("drafts", DRAFTS_HEADERS)
 
 def append_row_safe(ws, row):
-    """Robust append that avoids 'Unable to parse range' errors."""
+    """Robust append that works even when the API rejects a bare sheet name."""
     try:
-        ws.append_row(row, value_input_option="USER_ENTERED")
+        ws.append_rows([row], value_input_option="USER_ENTERED", insert_data_option="INSERT_ROWS")
         return
     except Exception:
         pass
     try:
-        # Slow but reliable: find next row and write there.
-        current = ws.get_all_values()
-        next_row = len(current) + 1
-        # ensure capacity
-        if next_row > ws.row_count:
-            ws.add_rows(max(10, next_row - ws.row_count))
-        ws.update(f"A{next_row}", [row], value_input_option="USER_ENTERED")
+        ws.spreadsheet.values_append(
+            f"'{ws.title}'!A1",
+            params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+            body={"values": [row]},
+        )
     except Exception as e2:
         st.warning(f"Append failed: {e2}")
 
@@ -287,16 +274,6 @@ def log_turn(prompt: str, response: str):
         excerpt(response, 10000),
     ])
 
-def log_ping(note="login"):
-    append_row_safe(EVENTS_WS, [
-        datetime.datetime.now().isoformat(),
-        st.session_state.user_id or "",
-        st.session_state.assignment_id or "",
-        0,
-        note,
-        "",
-    ])
-
 def save_progress(silent=False):
     draft_text = html_to_text(st.session_state.draft_html)
     append_row_safe(DRAFTS_WS, [
@@ -311,7 +288,6 @@ def save_progress(silent=False):
     if not silent: st.toast("Draft saved")
 
 def load_progress():
-    # Robust read even if header row is messy (uses expected_headers)
     try:
         recs = DRAFTS_WS.get_all_records(expected_headers=DRAFTS_HEADERS, head=1, default_blank="")
         for r in reversed(recs):
@@ -398,92 +374,42 @@ def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
         d.add_paragraph(f"- Cosine: {r['cosine']} | Final: {r['final_seg']} | LLM: {r['nearest_llm']}")
     buf = io.BytesIO(); d.save(buf); buf.seek(0); return buf.read()
 
-# ---------- Login / Landing ----------
+# ---------- Login ----------
 def login_view():
-    st.title("LLM Coursework Helper")
-
-    # Public landing information for both roles
-    st.markdown('<div class="hero">', unsafe_allow_html=True)
-    st.markdown("### Empowering coursework with responsible AI")
-    st.markdown(
-        "This pilot helps students ideate and draft with an AI assistant, while giving academics a transparent, "
-        "privacy-aware view of **process evidence** (chat turns & draft evolution)."
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    colA, colB = st.columns(2)
-    with colA:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("## For Students")
-        st.markdown("""
-- Brainstorm with the AI (all turns are logged).
-- Draft in the rich editor; autosave & resume anytime.
-- Run **similarity check** vs AI outputs to keep your own voice.
-- Export a **DOCX evidence pack** (chat + draft + similarity).
-- **Your responsibilities**: cite external sources, follow your assessment rules, and avoid pasting AI text verbatim.
-        """)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with colB:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("## For Academics")
-        st.markdown("""
-- Dashboard to review students’ **turn-by-turn** interactions.
-- See **latest draft** and AI ↔ student exchanges.
-- Suggested **writing-alignment** metric for oversight (not grading).
-- Data stored: timestamp, student ID (pseudonymous), assignment ID, prompt, response, latest draft snapshot.
-- Data minimisation: no identifiers beyond provided ID.
-        """)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with st.expander("Privacy & Ethics"):
-        st.markdown("""
-- We log: **timestamps**, **student ID**, **assignment ID**, **prompts**, **AI responses**, and **draft snapshots**.
-- We do **not** log browser metadata or personal identifiers beyond the ID you enter.
-- The AI output is **advisory**. You are responsible for academic integrity, originality, and citation.
-        """)
-
-    st.markdown("---")
+    st.title("LLM Coursework Helper — Login")
 
     @st.cache_data(ttl=60)
-    def known_student_ids():
+    def get_all_student_ids():
         try:
             recs = DRAFTS_WS.get_all_records(expected_headers=DRAFTS_HEADERS, head=1, default_blank="")
             if not recs: return set()
-            return set(pd.DataFrame(recs)["user_id"].astype(str).unique())
+            df = pd.DataFrame(recs)
+            return set(df['user_id'].astype(str).unique())
         except Exception:
             return set()
 
-    user_input = st.text_input("Enter your **Student ID** or a **Passcode**",
-                               placeholder="Student ID, Student Passcode, or Academic Passcode")
+    user_input = st.text_input(
+        "Enter your ID or a Passcode",
+        placeholder="Student ID, Student Passcode, or Academic Passcode"
+    )
 
     c1, c2 = st.columns([1, 1])
     with c1:
         if st.button("Login", use_container_width=True):
             inp = (user_input or "").strip().upper()
             if inp and ACADEMIC_PASSCODE and inp == ACADEMIC_PASSCODE.upper():
-                st.session_state.update({"__auth_ok": True, "is_academic": True, "user_id": "Academic", "show_landing_page": False})
-                log_ping("academic_login")
-                st.rerun()
+                st.session_state.update({"__auth_ok": True, "is_academic": True, "user_id": "Academic"}); st.rerun()
             elif inp and APP_PASSCODE and inp == APP_PASSCODE.upper():
                 new_id = _gen_id()
-                st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": new_id, "show_landing_page": True})
-                log_ping("student_newid_login")
-                st.success(f"Your new Student ID is **{new_id}** — copy it to resume later.")
-                st.rerun()
-            elif inp in known_student_ids():
-                st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": inp, "show_landing_page": False})
-                log_ping("student_return_login")
-                st.rerun()
+                st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": new_id, "show_landing_page": True}); st.rerun()
+            elif inp in get_all_student_ids():
+                st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": inp, "show_landing_page": False}); st.rerun()
             else:
                 st.error("Invalid ID or Passcode.")
     with c2:
         if st.button("Generate New Student ID", use_container_width=True):
             new_id = _gen_id()
-            st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": new_id, "show_landing_page": True})
-            log_ping("student_newid_login")
-            st.success(f"Your new Student ID is **{new_id}** — copy it to resume later.")
-            st.rerun()
+            st.session_state.update({"__auth_ok": True, "is_academic": False, "user_id": new_id, "show_landing_page": True}); st.rerun()
 
 # ---------- Academic dashboard ----------
 def render_academic_dashboard():
@@ -505,16 +431,14 @@ def render_academic_dashboard():
 
     drafts_df, events_df = get_all_student_data()
     if drafts_df.empty and events_df.empty:
-        st.warning("No student data recorded yet.")
-        return
+        st.warning("No student data recorded yet."); return
 
     all_ids = sorted({*(drafts_df.get('user_id', pd.Series([])).dropna().astype(str)),
                       *(events_df.get('user_id', pd.Series([])).dropna().astype(str))} - {"Academic"})
 
     sid = st.selectbox("Select a Student ID to review", all_ids, index=None, placeholder="Search…")
     if not sid:
-        st.info("Select a student to begin.")
-        return
+        st.info("Select a student to begin."); return
 
     st.header(f"Reviewing: {sid}")
     s_drafts = drafts_df[drafts_df['user_id'] == sid]
@@ -526,7 +450,7 @@ def render_academic_dashboard():
         if not s_drafts.empty:
             latest = s_drafts.sort_values('last_updated', ascending=False).iloc[0]
             st.markdown(f"**Last Saved:** {latest['last_updated']}")
-            st_html(f'<div class="chat-box">{latest["draft_html"]}</div>', height=600)
+            st_html(f'<div class="chat-box">{latest["draft_html"]}</div>', height=560)
         else:
             st.info("No saved drafts for this student.")
 
@@ -537,31 +461,23 @@ def render_academic_dashboard():
             for _, row in s_events.iterrows():
                 bubbles.append(f'<div class="chat-bubble chat-user"><strong>Prompt (Turn {row.get("turn","?")}):</strong><br>{md_to_html(row["prompt"])}</div>')
                 bubbles.append(f'<div class="chat-bubble chat-assistant"><strong>Response:</strong><br>{md_to_html(row["response"])}</div>')
-            st_html(f'<div class="chat-box">{"".join(bubbles)}</div>', height=600)
+            st_html(f'<div class="chat-box">{"".join(bubbles)}</div>', height=560)
         else:
             st.info("No chat history for this student.")
 
 # ---------- Student view ----------
 def render_student_view():
+    # Landing page — nothing else should render here
     if st.session_state.get("show_landing_page", False):
-        st.markdown('<div class="hero">', unsafe_allow_html=True)
-        st.markdown("### Welcome to the LLM Coursework Helper")
-        st.markdown("Use the AI assistant to brainstorm, and the rich editor to write. All turns and draft saves are logged for **process evidence**.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        with st.expander("What gets logged?"):
-            st.markdown("- **Timestamps**, your **Student ID**, **Assignment ID**, each **prompt**, the **AI response**, and saved **draft snapshots**.")
+        st.markdown('<div class="landing-container">', unsafe_allow_html=True)
+        st.title("Welcome to the LLM Coursework Helper")
+        st.markdown("Use the chat to brainstorm and the rich editor to write. Your work and interactions are logged.")
         st.markdown("---")
-        c1, c2 = st.columns([1,1])
-        with c1:
-            if st.button("Get started", type="primary", use_container_width=True):
-                st.session_state.show_landing_page = False
-                st.rerun()
-        with c2:
-            if st.button("Sign out", use_container_width=True):
-                for k in list(st.session_state.keys()):
-                    del st.session_state[k]
-                st.rerun()
-        return
+        if st.button("Get Started", type="primary", use_container_width=True):
+            st.session_state.show_landing_page = False
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+        return  # IMPORTANT: stop rendering chat/editor on landing
 
     # Header
     st.markdown(
@@ -573,7 +489,7 @@ def render_student_view():
         f'</div>', unsafe_allow_html=True
     )
 
-    # Toolbar (minimal)
+    # Toolbar
     t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
     with t1:
         st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
@@ -588,15 +504,18 @@ def render_student_view():
                 st.warning("No saved draft found.")
     with t3:
         if st.button("🧹 Clear Chat"):
-            st.session_state.chat = []; st.session_state.llm_outputs = []; st.toast("Chat cleared")
+            st.session_state.chat = []
+            st.session_state.llm_outputs = []
+            st.toast("Chat cleared")
 
+    # ---- Two-column layout (Assistant | Draft) ----
     left, right = st.columns([0.5, 0.5], gap="large")
 
     # Left: Assistant
     with left:
         st.subheader("💬 Assistant")
 
-        # Build bubbles from FULL history
+        # Build bubbles from the FULL history
         if not st.session_state.get("chat"):
             bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
         else:
@@ -604,20 +523,57 @@ def render_student_view():
             for m in st.session_state.chat:
                 css = "chat-user" if m["role"] == "user" else "chat-assistant"
                 content = md_to_html(m.get("text", "")) if m["role"] == "assistant" \
-                          else _html.escape(m.get("text", "")).replace("\n", "<br>")
+                         else _html.escape(m.get("text", "")).replace("\n", "<br>")
                 all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
             bubbles_html = "".join(all_bubbles)
 
-        # Typing indicator if pending
+        # If we have a pending prompt, show a typing indicator immediately
         if st.session_state.get("pending_prompt"):
             bubbles_html += '<div class="chat-bubble chat-assistant">…thinking</div>'
 
-        # Render chat; auto-scroll to bottom
-        st_html(
-            f'<div id="chatbox" class="chat-box">{bubbles_html}</div>'
-            f'<script>var b=document.getElementById("chatbox"); if(b) b.scrollTop=b.scrollHeight;</script>',
-            height=600
-        )
+        # Render chat inside an iframe with its own CSS and fixed height
+        st_html(f"""
+        <style>
+          :root {{ --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif; }}
+          * {{ box-sizing: border-box; font-family: var(--ui-font); }}
+          .chat-frame {{ display:flex; flex-direction:column; height: 560px; }}
+          .chat-scroll {{
+            flex:1 1 auto; overflow-y:auto; padding:.5rem;
+            border:1px solid #dcdfe6; border-radius:10px; background:#fff;
+            scroll-behavior:smooth; overscroll-behavior:contain;
+          }}
+          .chat-empty {{
+            border:1px dashed #e6e9f2; background:#fbfbfb; color:#708090;
+            padding:.6rem .8rem; border-radius:10px; margin:.45rem .2rem;
+          }}
+          .chat-bubble {{
+            border:1px solid #eee; border-radius:12px; padding:.7rem .9rem;
+            margin:.45rem .2rem; line-height:1.55; font-size:.95rem;
+          }}
+          .chat-user      {{ background:#eef7ff; }}
+          .chat-assistant {{ background:#f6f6f6; }}
+          .chat-bubble p {{ margin:.35rem 0; }}
+          .chat-bubble ul, .chat-bubble ol {{ margin:.35rem 0 .35rem 1.25rem; }}
+          .chat-bubble table {{ border-collapse:collapse; width:100%; margin:.35rem 0; }}
+          .chat-bubble th, .chat-bubble td {{ border:1px solid #e5e7eb; padding:.35rem .5rem; }}
+          .chat-bubble code {{ background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }}
+          .chat-bubble pre {{
+            background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px;
+            overflow:auto; font-size:.9rem;
+          }}
+        </style>
+
+        <div class="chat-frame">
+          <div id="chatbox" class="chat-scroll">
+            {bubbles_html}
+          </div>
+        </div>
+
+        <script>
+          const box = document.getElementById('chatbox');
+          if (box) {{ box.scrollTop = box.scrollHeight; }}
+        </script>
+        """, height=580)
 
         # Prompt form
         with st.form("chat_form", clear_on_submit=True):
@@ -642,35 +598,30 @@ def render_student_view():
                 log_turn(prompt=p, response=reply)  # single consolidated row per turn
             st.rerun()
 
-    # Right: Draft (KPIs removed for speed)
+    # Right: Draft (KPIs removed for speed as requested)
     with right:
         st.subheader("📝 Draft")
-        st.markdown('<div class="editor-wrap">', unsafe_allow_html=True)
         st.session_state.draft_html = render_quill_html("editor", st.session_state.draft_html)
-        st.markdown('</div>', unsafe_allow_html=True)
 
         # Auto-save
         maybe_autosave()
 
-        # Actions
+        # Actions only
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button("💾 Save Draft", use_container_width=True):
+            if st.button("💾 Save Draft"):
                 save_progress()
         with c2:
-            if st.button("📊 Run Similarity", use_container_width=True):
+            if st.button("📊 Run Similarity"):
                 plain = html_to_text(st.session_state.draft_html)
                 if plain.strip() and st.session_state.llm_outputs:
                     report = compute_similarity_report(plain, st.session_state.llm_outputs, SIM_THRESHOLD)
                     st.session_state.report = report
                     st.success(f"Mean: {report['mean']} | High-sim: {report['high_share']*100:.1f}%")
-                    with st.expander("Matches (trimmed)"):
-                        for r in report["rows"]:
-                            st.markdown(f"- **Cos:** {r['cosine']}  \n  **Final:** {r['final_seg']}  \n  **LLM:** {r['nearest_llm']}")
                 else:
                     st.warning("Need draft text + at least one LLM response.")
         with c3:
-            if st.button("⬇️ Export Evidence (DOCX)", use_container_width=True):
+            if st.button("⬇️ Export Evidence (DOCX)"):
                 try:
                     rep = st.session_state.get("report", {"backend": SIM_BACKEND, "mean": 0.0, "high_share": 0.0, "rows": []})
                     data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.chat, st.session_state.draft_html, rep)
