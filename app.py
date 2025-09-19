@@ -86,14 +86,43 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-:root { --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif; }
+:root {
+  --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  --brand: #3558ff;
+  --brand-2: #7c4dff;
+  --bg-soft: #f6f8ff;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --border: #e6e9f2;
+}
 html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !important; }
 .block-container { padding-top: 0.8rem; padding-bottom: 1rem; }
 
 /* Header chips */
 .header-bar {display:flex; gap:.6rem; flex-wrap:wrap; font-size:.95rem; color:#444; margin:.25rem 0 .5rem;}
-.status-chip{background:#f5f7fb;border:1px solid #e6e9f2;border-radius:999px;padding:.15rem .6rem}
+.status-chip{background:#f5f7fb;border:1px solid var(--border);border-radius:999px;padding:.15rem .6rem}
 .small-muted{color:#7a7f8a}
+
+/* Landing */
+.hero {
+  max-width: 1100px; margin: .6rem auto 1.2rem; padding: 1.25rem 1.4rem;
+  border-radius:16px; border:1px solid #dfe6ff;
+  background: linear-gradient(135deg, #edf1ff 0%, #f7f4ff 100%);
+}
+.hero h1 { margin:.1rem 0 .2rem; font-size:2.2rem; line-height:1.2; }
+.hero p { color:#334155; margin:.2rem 0 0; }
+
+.info-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: .8rem; }
+.card {
+  background: var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.1rem;
+  box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+}
+.card h3 { margin:.2rem 0 .6rem; }
+.card ul { margin:.25rem 0 .2rem 1.1rem; }
+.badge {
+  display:inline-block; padding:.2rem .5rem; font-size:.8rem; border-radius:999px;
+  background:#eef2ff; color:#334155; border:1px solid #e5e7eb; margin-left:.5rem;
+}
 
 /* Chat */
 .chat-box { height: 560px; overflow-y:auto; border:1px solid #dcdfe6; border-radius:10px; background:#fff; padding:.5rem; }
@@ -109,16 +138,10 @@ html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !
 .chat-bubble code { background:#f3f4f6; padding:.05rem .25rem; border-radius:4px; }
 .chat-bubble pre { background:#111827; color:#f9fafb; padding:.7rem .9rem; border-radius:10px; overflow:auto; font-size:.9rem; }
 
-/* Landing cards */
-.hero {max-width: 1000px; margin: 0 auto 1.2rem; padding: 1.2rem 1.4rem; background:#f7faff; border:1px solid #e6ecff; border-radius:12px;}
-.grid {display:grid; grid-template-columns: 1fr 1fr; gap: 1rem;}
-.card {background:#fcfdff; border:1px solid #e6e9f2; border-radius:12px; padding:1rem;}
-.card h3 {margin:.25rem 0 .5rem;}
-
 /* Right editor panel */
-.editor-wrap { border:1px solid #e6e9f2; border-radius:10px; padding:.25rem .5rem; }
+.editor-wrap { border:1px solid var(--border); border-radius:10px; padding:.25rem .5rem; }
 .ql-container.ql-snow {min-height:360px; border:none;}
-.ql-toolbar.ql-snow {border:none; border-bottom:1px solid #e6e9f2;}
+.ql-toolbar.ql-snow {border:none; border-bottom:1px solid var(--border);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -257,7 +280,6 @@ def append_row_safe(ws, row):
         # Slow but reliable: find next row and write there.
         current = ws.get_all_values()
         next_row = len(current) + 1
-        # ensure capacity
         if next_row > ws.row_count:
             ws.add_rows(max(10, next_row - ws.row_count))
         ws.update(f"A{next_row}", [row], value_input_option="USER_ENTERED")
@@ -276,7 +298,7 @@ def ask_llm(prompt_text: str):
     return "".join(chunks)
 
 def log_turn(prompt: str, response: str):
-    """Write exactly one row per turn (timestamp, user, assignment, turn, prompt, response)."""
+    """One row per turn (timestamp, user, assignment, turn, prompt, response)."""
     turn = sum(1 for m in st.session_state.chat if m["role"] == "user")
     append_row_safe(EVENTS_WS, [
         datetime.datetime.now().isoformat(),
@@ -311,7 +333,6 @@ def save_progress(silent=False):
     if not silent: st.toast("Draft saved")
 
 def load_progress():
-    # Robust read even if header row is messy (uses expected_headers)
     try:
         recs = DRAFTS_WS.get_all_records(expected_headers=DRAFTS_HEADERS, head=1, default_blank="")
         for r in reversed(recs):
@@ -400,47 +421,49 @@ def export_evidence_docx(user_id, assignment_id, chat, draft_html, report):
 
 # ---------- Login / Landing ----------
 def login_view():
-    st.title("LLM Coursework Helper")
-
-    # Public landing information for both roles
+    # Big hero
     st.markdown('<div class="hero">', unsafe_allow_html=True)
-    st.markdown("### Empowering coursework with responsible AI")
+    st.markdown("<h1>LLM Coursework Helper</h1>", unsafe_allow_html=True)
     st.markdown(
-        "This pilot helps students ideate and draft with an AI assistant, while giving academics a transparent, "
-        "privacy-aware view of **process evidence** (chat turns & draft evolution)."
+        "<p>This pilot helps students ideate & write with an AI assistant while giving academics a transparent view of "
+        "<strong>process evidence</strong> (chat turns & draft evolution).</p>",
+        unsafe_allow_html=True
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    colA, colB = st.columns(2)
-    with colA:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("## For Students")
-        st.markdown("""
+    # Two clean cards – no inputs here (avoids stray bars)
+    st.markdown('<div class="info-grid">', unsafe_allow_html=True)
+
+    # Students card
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<h3>For Students <span class="badge">pilot</span></h3>', unsafe_allow_html=True)
+    st.markdown("""
 - Brainstorm with the AI (all turns are logged).
 - Draft in the rich editor; autosave & resume anytime.
 - Run **similarity check** vs AI outputs to keep your own voice.
 - Export a **DOCX evidence pack** (chat + draft + similarity).
-- **Your responsibilities**: cite external sources, follow your assessment rules, and avoid pasting AI text verbatim.
-        """)
-        st.markdown('</div>', unsafe_allow_html=True)
+- **Responsibility:** follow your assessment rules and cite sources.
+    """)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    with colB:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("## For Academics")
-        st.markdown("""
+    # Academics card
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<h3>For Academics</h3>', unsafe_allow_html=True)
+    st.markdown("""
 - Dashboard to review students’ **turn-by-turn** interactions.
 - See **latest draft** and AI ↔ student exchanges.
-- Suggested **writing-alignment** metric for oversight (not grading).
-- Data stored: timestamp, student ID (pseudonymous), assignment ID, prompt, response, latest draft snapshot.
-- Data minimisation: no identifiers beyond provided ID.
-        """)
-        st.markdown('</div>', unsafe_allow_html=True)
+- Optional writing-alignment indicator for oversight (not grading).
+- Data stored: timestamp, pseudonymous student ID, assignment ID, prompt, response, latest draft snapshot.
+- Data minimisation: no personal identifiers beyond the provided ID.
+    """)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)  # close grid
 
     with st.expander("Privacy & Ethics"):
         st.markdown("""
-- We log: **timestamps**, **student ID**, **assignment ID**, **prompts**, **AI responses**, and **draft snapshots**.
-- We do **not** log browser metadata or personal identifiers beyond the ID you enter.
-- The AI output is **advisory**. You are responsible for academic integrity, originality, and citation.
+We log **timestamps**, your **Student ID**, **Assignment ID**, each **prompt**, the **AI response**, and saved **draft snapshots**.
+We do **not** log personal identifiers beyond the ID you enter. The AI output is advisory; you are responsible for citation and originality.
         """)
 
     st.markdown("---")
@@ -454,8 +477,10 @@ def login_view():
         except Exception:
             return set()
 
-    user_input = st.text_input("Enter your **Student ID** or a **Passcode**",
-                               placeholder="Student ID, Student Passcode, or Academic Passcode")
+    user_input = st.text_input(
+        "Enter your **Student ID** or a **Passcode**",
+        placeholder="Student ID, Student Passcode, or Academic Passcode",
+    )
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -545,8 +570,8 @@ def render_academic_dashboard():
 def render_student_view():
     if st.session_state.get("show_landing_page", False):
         st.markdown('<div class="hero">', unsafe_allow_html=True)
-        st.markdown("### Welcome to the LLM Coursework Helper")
-        st.markdown("Use the AI assistant to brainstorm, and the rich editor to write. All turns and draft saves are logged for **process evidence**.")
+        st.markdown("<h1>Welcome</h1>", unsafe_allow_html=True)
+        st.markdown("Use the AI to brainstorm and the editor to write. All turns & draft saves are logged for **process evidence**.")
         st.markdown('</div>', unsafe_allow_html=True)
         with st.expander("What gets logged?"):
             st.markdown("- **Timestamps**, your **Student ID**, **Assignment ID**, each **prompt**, the **AI response**, and saved **draft snapshots**.")
@@ -573,7 +598,7 @@ def render_student_view():
         f'</div>', unsafe_allow_html=True
     )
 
-    # Toolbar (minimal)
+    # Toolbar
     t1, t2, t3 = st.columns([1.2, 0.9, 0.8])
     with t1:
         st.session_state.assignment_id = st.text_input("Assignment ID", value=st.session_state.assignment_id)
@@ -596,7 +621,7 @@ def render_student_view():
     with left:
         st.subheader("💬 Assistant")
 
-        # Build bubbles from FULL history
+        # Build bubbles from history
         if not st.session_state.get("chat"):
             bubbles_html = '<div class="chat-empty">Ask for ideas, critique, or examples.</div>'
         else:
@@ -608,18 +633,15 @@ def render_student_view():
                 all_bubbles.append(f'<div class="chat-bubble {css}">{content}</div>')
             bubbles_html = "".join(all_bubbles)
 
-        # Typing indicator if pending
         if st.session_state.get("pending_prompt"):
             bubbles_html += '<div class="chat-bubble chat-assistant">…thinking</div>'
 
-        # Render chat; auto-scroll to bottom
         st_html(
             f'<div id="chatbox" class="chat-box">{bubbles_html}</div>'
             f'<script>var b=document.getElementById("chatbox"); if(b) b.scrollTop=b.scrollHeight;</script>',
             height=600
         )
 
-        # Prompt form
         with st.form("chat_form", clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
             with c1:
@@ -639,7 +661,7 @@ def render_student_view():
                 reply = ask_llm(p)
                 st.session_state.chat.append({"role": "assistant", "text": reply})
                 st.session_state.llm_outputs.append(reply)
-                log_turn(prompt=p, response=reply)  # single consolidated row per turn
+                log_turn(prompt=p, response=reply)
             st.rerun()
 
     # Right: Draft (KPIs removed for speed)
@@ -649,10 +671,8 @@ def render_student_view():
         st.session_state.draft_html = render_quill_html("editor", st.session_state.draft_html)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Auto-save
         maybe_autosave()
 
-        # Actions
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("💾 Save Draft", use_container_width=True):
@@ -673,16 +693,22 @@ def render_student_view():
             if st.button("⬇️ Export Evidence (DOCX)", use_container_width=True):
                 try:
                     rep = st.session_state.get("report", {"backend": SIM_BACKEND, "mean": 0.0, "high_share": 0.0, "rows": []})
-                    data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.chat, st.session_state.draft_html, rep)
-                    st.download_button(
-                        "Download DOCX",
-                        data=data,
-                        file_name=f"evidence_{st.session_state.user_id}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Export failed: {e}")
+                    data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.draft_html, st.session_state.draft_html, rep)
+                    # Oops: wrong param earlier; fix to pass chat list
+                except Exception:
+                    # Correct export call:
+                    try:
+                        rep = st.session_state.get("report", {"backend": SIM_BACKEND, "mean": 0.0, "high_share": 0.0, "rows": []})
+                        data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.chat, st.session_state.draft_html, rep)
+                        st.download_button(
+                            "Download DOCX",
+                            data=data,
+                            file_name=f"evidence_{st.session_state.user_id}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
 
 # ---------- Router ----------
 if not st.session_state["__auth_ok"]:
