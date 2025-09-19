@@ -95,7 +95,31 @@ st.markdown("""
   --muted: #6b7280;
   --border: #e6e9f2;
 }
-html, body, [data-testid="stAppViewContainer"] * { font-family: var(--ui-font) !important; }
+/* Use our UI font without overriding icon fonts */
+html, body, [data-testid="stAppViewContainer"] {
+  font-family: var(--ui-font);
+}
+[data-testid="stAppViewContainer"] :where(:not([data-baseweb="icon"])) {
+  font-family: inherit !important;
+}
+
+/* Reset Streamlit/BaseWeb icon fonts (expander chevron, etc.) */
+[data-baseweb="icon"],
+.material-icons, .material-icons-outlined, .material-icons-round, .material-icons-sharp,
+span[data-testid="stExpanderToggleIcon"] {
+  font-family: "Material Icons Outlined","Material Icons","Material Icons Round","Material Icons Sharp","Material Icons", sans-serif !important;
+  font-weight: normal !important;
+  font-style: normal !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  white-space: nowrap;
+  direction: ltr;
+}
+
+            
+
+
+
 .block-container { padding-top: 0.8rem; padding-bottom: 1rem; }
 
 /* Header chips */
