@@ -116,7 +116,7 @@ span[data-testid="stExpanderToggleIcon"] {
   direction: ltr;
 }
 
-            
+         
 
 
 
@@ -166,6 +166,33 @@ span[data-testid="stExpanderToggleIcon"] {
 .editor-wrap { border:1px solid var(--border); border-radius:10px; padding:.25rem .5rem; }
 .ql-container.ql-snow {min-height:360px; border:none;}
 .ql-toolbar.ql-snow {border:none; border-bottom:1px solid var(--border);}
+
+/* --- Force a clean chevron for expanders, regardless of icon font --- */
+
+/* Hide the ligature text completely */
+[data-testid="stExpanderHeader"] [data-testid="stExpanderToggleIcon"]{
+  font-size:0 !important;      /* hides 'keyboard_arrow_down' text */
+  line-height:0 !important;
+  width: 1.25rem;
+  display:inline-block;
+}
+
+/* Inject our own chevron */
+[data-testid="stExpanderHeader"] [data-testid="stExpanderToggleIcon"]::after{
+  content:"▾";                 /* safe, cross-platform character */
+  font-size:16px;
+  line-height:1;
+  color:#6b7280;
+  transition: transform .18s ease;
+  vertical-align: middle;
+}
+
+/* Rotate chevron when open */
+[data-testid="stExpanderHeader"][aria-expanded="true"]
+  [data-testid="stExpanderToggleIcon"]::after{
+  transform: rotate(180deg);
+}
+
 </style>
 """, unsafe_allow_html=True)
 
