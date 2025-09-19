@@ -43,7 +43,8 @@ except Exception:
     _md = None
 
 def md_to_html(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     if _md:
         try:
             return _md.markdown(
@@ -95,29 +96,11 @@ st.markdown("""
   --muted: #6b7280;
   --border: #e6e9f2;
 }
-/* Use our UI font without overriding icon fonts */
+
+/* Use our UI font (do NOT override icon fonts) */
 html, body, [data-testid="stAppViewContainer"] {
   font-family: var(--ui-font);
 }
-[data-testid="stAppViewContainer"] :where(:not([data-baseweb="icon"])) {
-  font-family: inherit !important;
-}
-
-/* Reset Streamlit/BaseWeb icon fonts (expander chevron, etc.) */
-[data-baseweb="icon"],
-.material-icons, .material-icons-outlined, .material-icons-round, .material-icons-sharp,
-span[data-testid="stExpanderToggleIcon"] {
-  font-family: "Material Icons Outlined","Material Icons","Material Icons Round","Material Icons Sharp","Material Icons", sans-serif !important;
-  font-weight: normal !important;
-  font-style: normal !important;
-  letter-spacing: normal !important;
-  text-transform: none !important;
-  white-space: nowrap;
-  direction: ltr;
-}
-         
-
-
 
 .block-container { padding-top: 0.8rem; padding-bottom: 1rem; }
 
@@ -166,32 +149,20 @@ span[data-testid="stExpanderToggleIcon"] {
 .ql-container.ql-snow {min-height:360px; border:none;}
 .ql-toolbar.ql-snow {border:none; border-bottom:1px solid var(--border);}
 
-/* --- Force a clean chevron for expanders, regardless of icon font --- */
-
-/* Hide the ligature text completely */
+/* Replace expander icon safely: hide built-in icon, draw our own */
 [data-testid="stExpanderHeader"] [data-testid="stExpanderToggleIcon"]{
-  font-size:0 !important;      /* hides 'keyboard_arrow_down' text */
-  line-height:0 !important;
-  width: 1.25rem;
-  display:inline-block;
+  display:none !important; /* prevent ligature text from ever showing */
 }
-
-/* Inject our own chevron */
-[data-testid="stExpanderHeader"] [data-testid="stExpanderToggleIcon"]::after{
-  content:"▾";                 /* safe, cross-platform character */
-  font-size:16px;
-  line-height:1;
+[data-testid="stExpanderHeader"]::before{
+  content:"▸";
+  display:inline-block;
+  margin-right:.35rem;
   color:#6b7280;
   transition: transform .18s ease;
-  vertical-align: middle;
 }
-
-/* Rotate chevron when open */
-[data-testid="stExpanderHeader"][aria-expanded="true"]
-  [data-testid="stExpanderToggleIcon"]::after{
-  transform: rotate(180deg);
+[data-testid="stExpanderHeader"][aria-expanded="true"]::before{
+  content:"▾";
 }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -249,8 +220,10 @@ def render_quill_html(key: str, initial_html: str) -> str:
         if out.get("html"): return out["html"]
         delta = out.get("delta") or out.get("ops") or {}
         ops = delta.get("ops") if isinstance(delta, dict) else delta
-        try: text = "".join(op.get("insert", "") for op in ops) if isinstance(ops, list) else ""
-        except Exception: text = ""
+        try:
+            text = "".join(op.get("insert", "") for op in ops) if isinstance(ops, list) else ""
+        except Exception:
+            text = ""
         return "<p>" + text.replace("\n", "</p><p>") + "</p>" if text else (initial_html or "")
     if isinstance(out, str): return out
     return initial_html or ""
@@ -481,7 +454,7 @@ def login_view():
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Two clean cards – no inputs here (avoids stray bars)
+    # Two clean cards
     st.markdown('<div class="info-grid">', unsafe_allow_html=True)
 
     # Students card
@@ -743,22 +716,22 @@ def render_student_view():
             if st.button("⬇️ Export Evidence (DOCX)", use_container_width=True):
                 try:
                     rep = st.session_state.get("report", {"backend": SIM_BACKEND, "mean": 0.0, "high_share": 0.0, "rows": []})
-                    data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.draft_html, st.session_state.draft_html, rep)
-                    # Oops: wrong param earlier; fix to pass chat list
-                except Exception:
-                    # Correct export call:
-                    try:
-                        rep = st.session_state.get("report", {"backend": SIM_BACKEND, "mean": 0.0, "high_share": 0.0, "rows": []})
-                        data = export_evidence_docx(st.session_state.user_id, st.session_state.assignment_id, st.session_state.chat, st.session_state.draft_html, rep)
-                        st.download_button(
-                            "Download DOCX",
-                            data=data,
-                            file_name=f"evidence_{st.session_state.user_id}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                    except Exception as e:
-                        st.error(f"Export failed: {e}")
+                    data = export_evidence_docx(
+                        st.session_state.user_id,
+                        st.session_state.assignment_id,
+                        st.session_state.chat,              # correct chat passed
+                        st.session_state.draft_html,
+                        rep
+                    )
+                    st.download_button(
+                        "Download DOCX",
+                        data=data,
+                        file_name=f"evidence_{st.session_state.user_id}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
 
 # ---------- Router ----------
 if not st.session_state["__auth_ok"]:
