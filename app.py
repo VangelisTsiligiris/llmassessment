@@ -115,7 +115,6 @@ span[data-testid="stExpanderToggleIcon"] {
   white-space: nowrap;
   direction: ltr;
 }
-
          
 
 
